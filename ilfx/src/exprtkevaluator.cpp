@@ -3,14 +3,23 @@
 //
 
 #include <iostream>
+#include <unordered_map>
 
+#include "exprtkevaluator.h"
 #include "exprtk/exprtk.hpp"
 
 bool evalExprWithX(double x, const std::string& expr) {
+    return evalExprWithVariables({{"x", x}}, expr);
+}
+
+bool evalExprWithVariables(const std::unordered_map<std::string, double>& variables, const std::string& expr) {
     typedef double T;
 
     exprtk::symbol_table<T> symbol_table;
-    symbol_table.add_variable("x", x); // TODO: dynamic variable discovery
+    std::unordered_map<std::string, T> boundVariables = variables;
+    for (auto& variable : boundVariables) {
+        symbol_table.add_variable(variable.first, variable.second);
+    }
     symbol_table.add_constants();
 
     exprtk::expression<T> expression;
@@ -27,4 +36,3 @@ bool evalExprWithX(double x, const std::string& expr) {
 
     return expression.value();
 }
-

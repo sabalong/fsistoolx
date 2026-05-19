@@ -6,6 +6,7 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -O2 -std=c11
 LDFLAGS = -lm
+UNAME_S := $(shell uname -s)
 
 # C++ compiler and flags
 CXX = g++
@@ -21,8 +22,13 @@ XML2_LIBS = $(shell pkg-config --libs libxml-2.0)
 GSL_CFLAGS = $(shell pkg-config --cflags gsl)
 GSL_LIBS = $(shell pkg-config --libs gsl)
 
-TCC_CFLAGS = -I/usr/local/include
-TCC_LIBS = -L/usr/local/lib -ltcc -ldl
+TCC_PREFIX ?= $(shell brew --prefix tinycc 2>/dev/null || echo /usr/local)
+TCC_CFLAGS = -I$(TCC_PREFIX)/include
+ifeq ($(UNAME_S),Darwin)
+TCC_LIBS = -L$(TCC_PREFIX)/lib -ltcc
+else
+TCC_LIBS = -L$(TCC_PREFIX)/lib -ltcc -ldl
+endif
 
 # Combine all flags
 ALL_CFLAGS = $(CFLAGS) $(GLIB_CFLAGS) $(XML2_CFLAGS) $(GSL_CFLAGS) $(TCC_CFLAGS)
@@ -30,7 +36,8 @@ ALL_LIBS = $(GLIB_LIBS) $(XML2_LIBS) $(GSL_LIBS) $(TCC_LIBS) $(LDFLAGS)
 
 # Directories
 SRC_DIR = src
-BUILD_DIR = build
+BUILD_DIR ?= build
+TARGET_DIR ?= .
 
 # Common source files (shared by eval_server and eval_cli)
 COMMON_SOURCES = $(SRC_DIR)/eval.c \
@@ -48,42 +55,42 @@ COMMON_OBJECTS = $(COMMON_SOURCES:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 # eval_server specific files
 SERVER_SOURCES = $(SRC_DIR)/eval_server.c
 SERVER_OBJECTS = $(SERVER_SOURCES:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
-SERVER_TARGET = eval_server
+SERVER_TARGET = $(TARGET_DIR)/eval_server
 
 # eval_cli specific files
 CLI_SOURCES = $(SRC_DIR)/eval_cli.c
 CLI_OBJECTS = $(CLI_SOURCES:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
-CLI_TARGET = eval_cli
+CLI_TARGET = $(TARGET_DIR)/eval_cli
 
 # eval_client specific files
 CLIENT_SOURCES = $(SRC_DIR)/eval_client.c
 CLIENT_OBJECTS = $(CLIENT_SOURCES:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
-CLIENT_TARGET = eval_client
+CLIENT_TARGET = $(TARGET_DIR)/eval_client
 
 # evaltk_cli specific files (C++)
 EVALTK_SOURCES = $(SRC_DIR)/evaltk_cli.cpp
 EVALTK_OBJECTS = $(EVALTK_SOURCES:$(SRC_DIR)/%.cpp=$(BUILD_DIR)/%.o)
-EVALTK_TARGET = evaltk_cli
+EVALTK_TARGET = $(TARGET_DIR)/evaltk_cli
 
 # build_tree_cli specific files
 BUILD_TREE_SOURCES = $(SRC_DIR)/build_tree_cli.c
 BUILD_TREE_OBJECTS = $(BUILD_TREE_SOURCES:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
-BUILD_TREE_TARGET = build_tree_cli
+BUILD_TREE_TARGET = $(TARGET_DIR)/build_tree_cli
 
 # kpmr_source_tree_cli specific files
 KPMR_TREE_SOURCES = $(SRC_DIR)/kpmr_source_tree_cli.c
 KPMR_TREE_OBJECTS = $(KPMR_TREE_SOURCES:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
-KPMR_TREE_TARGET = kpmr_source_tree_cli
+KPMR_TREE_TARGET = $(TARGET_DIR)/kpmr_source_tree_cli
 
 # build_tree_kpmr_cli specific files
 BUILD_TREE_KPMR_SOURCES = $(SRC_DIR)/build_tree_kpmr_cli.c
 BUILD_TREE_KPMR_OBJECTS = $(BUILD_TREE_KPMR_SOURCES:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
-BUILD_TREE_KPMR_TARGET = build_tree_kpmr_cli
+BUILD_TREE_KPMR_TARGET = $(TARGET_DIR)/build_tree_kpmr_cli
 
 # src_inherent_cli specific files
 SRC_INHERENT_SOURCES = $(SRC_DIR)/src_inherent_cli.c
 SRC_INHERENT_OBJECTS = $(SRC_INHERENT_SOURCES:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
-SRC_INHERENT_TARGET = src_inherent_cli
+SRC_INHERENT_TARGET = $(TARGET_DIR)/src_inherent_cli
 
 # Default target
 .PHONY: all
@@ -93,43 +100,46 @@ all: $(SERVER_TARGET) $(CLI_TARGET) $(CLIENT_TARGET) $(EVALTK_TARGET) $(BUILD_TR
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
+$(TARGET_DIR):
+	mkdir -p $(TARGET_DIR)
+
 # Link object files to create eval_server executable
-$(SERVER_TARGET): $(SERVER_OBJECTS) $(COMMON_OBJECTS)
+$(SERVER_TARGET): $(SERVER_OBJECTS) $(COMMON_OBJECTS) | $(TARGET_DIR)
 	$(CC) $(SERVER_OBJECTS) $(COMMON_OBJECTS) $(ALL_LIBS) -o $(SERVER_TARGET)
 	@echo "Build complete: $(SERVER_TARGET)"
 
 # Link object files to create eval_cli executable
-$(CLI_TARGET): $(CLI_OBJECTS) $(COMMON_OBJECTS)
+$(CLI_TARGET): $(CLI_OBJECTS) $(COMMON_OBJECTS) | $(TARGET_DIR)
 	$(CC) $(CLI_OBJECTS) $(COMMON_OBJECTS) $(ALL_LIBS) -o $(CLI_TARGET)
 	@echo "Build complete: $(CLI_TARGET)"
 
 # Link object files to create eval_client executable
-$(CLIENT_TARGET): $(CLIENT_OBJECTS)
+$(CLIENT_TARGET): $(CLIENT_OBJECTS) | $(TARGET_DIR)
 	$(CC) $(CLIENT_OBJECTS) $(GLIB_LIBS) -o $(CLIENT_TARGET)
 	@echo "Build complete: $(CLIENT_TARGET)"
 
 # Link object files to create evaltk_cli executable
-$(EVALTK_TARGET): $(EVALTK_OBJECTS)
+$(EVALTK_TARGET): $(EVALTK_OBJECTS) | $(TARGET_DIR)
 	$(CXX) $(EVALTK_OBJECTS) -o $(EVALTK_TARGET)
 	@echo "Build complete: $(EVALTK_TARGET)"
 
 # Link object files to create build_tree_cli executable
-$(BUILD_TREE_TARGET): $(BUILD_TREE_OBJECTS) $(COMMON_OBJECTS)
+$(BUILD_TREE_TARGET): $(BUILD_TREE_OBJECTS) $(COMMON_OBJECTS) | $(TARGET_DIR)
 	$(CC) $(BUILD_TREE_OBJECTS) $(COMMON_OBJECTS) $(ALL_LIBS) -o $(BUILD_TREE_TARGET)
 	@echo "Build complete: $(BUILD_TREE_TARGET)"
 
 # Link object files to create kpmr_source_tree_cli executable
-$(KPMR_TREE_TARGET): $(KPMR_TREE_OBJECTS) $(COMMON_OBJECTS)
+$(KPMR_TREE_TARGET): $(KPMR_TREE_OBJECTS) $(COMMON_OBJECTS) | $(TARGET_DIR)
 	$(CC) $(KPMR_TREE_OBJECTS) $(COMMON_OBJECTS) $(ALL_LIBS) -o $(KPMR_TREE_TARGET)
 	@echo "Build complete: $(KPMR_TREE_TARGET)"
 
 # Link object files to create build_tree_kpmr_cli executable
-$(BUILD_TREE_KPMR_TARGET): $(BUILD_TREE_KPMR_OBJECTS) $(BUILD_DIR)/xmlh.o $(BUILD_DIR)/glibh.o
+$(BUILD_TREE_KPMR_TARGET): $(BUILD_TREE_KPMR_OBJECTS) $(BUILD_DIR)/xmlh.o $(BUILD_DIR)/glibh.o | $(TARGET_DIR)
 	$(CC) $(BUILD_TREE_KPMR_OBJECTS) $(BUILD_DIR)/xmlh.o $(BUILD_DIR)/glibh.o $(GLIB_LIBS) $(XML2_LIBS) -o $(BUILD_TREE_KPMR_TARGET)
 	@echo "Build complete: $(BUILD_TREE_KPMR_TARGET)"
 
 # Link object files to create src_inherent_cli executable
-$(SRC_INHERENT_TARGET): $(SRC_INHERENT_OBJECTS) $(COMMON_OBJECTS)
+$(SRC_INHERENT_TARGET): $(SRC_INHERENT_OBJECTS) $(COMMON_OBJECTS) | $(TARGET_DIR)
 	$(CC) $(SRC_INHERENT_OBJECTS) $(COMMON_OBJECTS) $(ALL_LIBS) -o $(SRC_INHERENT_TARGET)
 	@echo "Build complete: $(SRC_INHERENT_TARGET)"
 

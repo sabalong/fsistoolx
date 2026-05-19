@@ -2,7 +2,9 @@
 #define ILFREPORTER_RISK_PROFILE_HPP
 
 #include <memory>
+#include <map>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "absl/status/status.h"
@@ -26,6 +28,68 @@ namespace chaiscript
 
 namespace riskprofile
 {
+    inline double boxedValueToThresholdDouble(const std::string &name, const chaiscript::Boxed_Value &value)
+    {
+        if (value.is_undef())
+        {
+            throw std::runtime_error("Threshold variable '" + name + "' is undefined");
+        }
+
+        try
+        {
+            return chaiscript::boxed_cast<double>(value);
+        }
+        catch (const chaiscript::exception::bad_boxed_cast &)
+        {
+        }
+
+        try
+        {
+            return static_cast<double>(chaiscript::boxed_cast<int>(value));
+        }
+        catch (const chaiscript::exception::bad_boxed_cast &)
+        {
+        }
+
+        try
+        {
+            return static_cast<double>(chaiscript::boxed_cast<long>(value));
+        }
+        catch (const chaiscript::exception::bad_boxed_cast &)
+        {
+        }
+
+        try
+        {
+            return static_cast<double>(chaiscript::boxed_cast<long long>(value));
+        }
+        catch (const chaiscript::exception::bad_boxed_cast &)
+        {
+        }
+
+        try
+        {
+            return static_cast<double>(chaiscript::boxed_cast<float>(value));
+        }
+        catch (const chaiscript::exception::bad_boxed_cast &)
+        {
+        }
+
+        throw std::runtime_error("Threshold variable '" + name + "' must be numeric");
+    }
+
+    inline std::unordered_map<std::string, double> thresholdVariablesFromChaiMap(
+        const std::map<std::string, chaiscript::Boxed_Value> &boxedVariables)
+    {
+        std::unordered_map<std::string, double> variables;
+
+        for (const auto &entry : boxedVariables)
+        {
+            variables.emplace(entry.first, boxedValueToThresholdDouble(entry.first, entry.second));
+        }
+
+        return variables;
+    }
 
     class InherentReportGenerator
     {
@@ -37,7 +101,17 @@ namespace riskprofile
 
         int ratingByThreshold(const std::string &threshold, double value)
         {
-            std::cout << "Evaluating rating for value: " << value << " using threshold: " << threshold << std::endl;
+            return ratingByThreshold(threshold, std::unordered_map<std::string, double>{{"x", value}});
+        }
+
+        int ratingByThresholdVars(const std::string &threshold, const std::map<std::string, chaiscript::Boxed_Value> &boxedVariables)
+        {
+            return ratingByThreshold(threshold, thresholdVariablesFromChaiMap(boxedVariables));
+        }
+
+        int ratingByThreshold(const std::string &threshold, const std::unordered_map<std::string, double> &variables)
+        {
+            std::cout << "Evaluating rating using threshold: " << threshold << std::endl;
             // Split threshold by \n
             std::istringstream stream(threshold);
             std::string line;
@@ -82,8 +156,8 @@ namespace riskprofile
 
                     std::cout << "  Compiled expression: '" << compiledExpr << "'" << std::endl;
 
-                    // Evaluate the expression with the given value
-                    if (evalExprWithX(value, compiledExpr))
+                    // Evaluate the expression with the given variables
+                    if (evalExprWithVariables(variables, compiledExpr))
                     {
                         // Return the rating if the expression matches
                         int rating = std::stoi(ratingStr);
@@ -131,7 +205,17 @@ namespace riskprofile
 
         int ratingByThreshold(const std::string &threshold, double value)
         {
-            std::cout << "Evaluating rating for value: " << value << " using threshold: " << threshold << std::endl;
+            return ratingByThreshold(threshold, std::unordered_map<std::string, double>{{"x", value}});
+        }
+
+        int ratingByThresholdVars(const std::string &threshold, const std::map<std::string, chaiscript::Boxed_Value> &boxedVariables)
+        {
+            return ratingByThreshold(threshold, thresholdVariablesFromChaiMap(boxedVariables));
+        }
+
+        int ratingByThreshold(const std::string &threshold, const std::unordered_map<std::string, double> &variables)
+        {
+            std::cout << "Evaluating rating using threshold: " << threshold << std::endl;
             // Split threshold by \n
             std::istringstream stream(threshold);
             std::string line;
@@ -176,8 +260,8 @@ namespace riskprofile
 
                     std::cout << "  Compiled expression: '" << compiledExpr << "'" << std::endl;
 
-                    // Evaluate the expression with the given value
-                    if (evalExprWithX(value, compiledExpr))
+                    // Evaluate the expression with the given variables
+                    if (evalExprWithVariables(variables, compiledExpr))
                     {
                         // Return the rating if the expression matches
                         int rating = std::stoi(ratingStr);

@@ -37,6 +37,13 @@ void riskprofile::KPMRReportGenerator::setupChaiScriptEvaluator(chaiscript::Chai
                     return this->ratingByThreshold(threshold, value);
                 }),
             "ratingByThreshold");
+
+    chai.add(chaiscript::fun(
+                [this](const std::string& threshold, const std::map<std::string, chaiscript::Boxed_Value>& variables)
+                {
+                    return this->ratingByThresholdVars(threshold, variables);
+                }),
+            "ratingByThresholdVars");
 }
 
 std::vector<kpmr::riskprofile::NodeType> riskprofile::KPMRReportGenerator::filterKPMRRiskProfileNodeXPath(
@@ -253,5 +260,4 @@ std::vector<chaiscript::Boxed_Value> riskprofile::KPMRReportGenerator::kpmrNodeT
 
     return boxedValues;
 }
-
 

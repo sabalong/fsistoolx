@@ -111,6 +111,8 @@ target_include_directories(ilfx_lib PUBLIC
     ${XERCES_INCLUDE_DIR}
 )
 target_link_directories(ilfx_lib PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/../gofunct/build-macos
+    ${CMAKE_CURRENT_SOURCE_DIR}/../gofunct/gen
     /usr/local/lib
     /opt/gsl/lib
 )
