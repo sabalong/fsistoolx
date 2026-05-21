@@ -105,7 +105,8 @@ mkdir -p "${ROOT_DIR}/gofunct/build-macos"
 )
 
 echo "==> Building ilfreporter"
-cmake -S "${ROOT_DIR}/ilfreporter-0.0.1" -B "${ROOT_DIR}/ilfreporter-0.0.1/build-macos"
+cmake -S "${ROOT_DIR}/ilfreporter-0.0.1" -B "${ROOT_DIR}/ilfreporter-0.0.1/build-macos" \
+  -DCMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH}"
 cmake --build "${ROOT_DIR}/ilfreporter-0.0.1/build-macos"
 
 echo "==> Building ilf CLIs"

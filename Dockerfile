@@ -128,7 +128,7 @@ COPY ./ilfreporter-0.0.1 /ilfreporter-0.0.1
 RUN cd /ilfreporter-0.0.1 && \
     rm -rf build && \
     mkdir -p build && cd build && \
-    cmake .. && \
+    cmake -DCMAKE_PREFIX_PATH=/usr/local .. && \
     make -j
   
 COPY ./ilf /ilf

@@ -107,7 +107,6 @@ target_link_libraries(riskprofile
     PUBLIC
         absl::status
         absl::strings
-        xerces-c
         ${XQILLA_LIBRARY}
         ${ANTLR4_LIBRARIES}
         ${XERCES_LIBRARIES}
