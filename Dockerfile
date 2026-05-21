@@ -160,7 +160,7 @@ RUN cd /ilfx && \
     mkdir -p build && \
     cd build && \
     cmake \
-      -DCMAKE_PREFIX_PATH=/usr/local \
+      -DCMAKE_PREFIX_PATH="/usr/local;/opt/gsl" \
       -DCMAKE_C_FLAGS="-I/opt/gsl/include" \
       -DCMAKE_CXX_FLAGS="-I/opt/gsl/include" \
       -DCMAKE_EXE_LINKER_FLAGS="-L/opt/gsl/lib" \
