@@ -13,12 +13,12 @@ class  ThresholdParser : public antlr4::Parser {
 public:
   enum {
     T__0 = 1, T__1 = 2, T__2 = 3, T__3 = 4, T__4 = 5, T__5 = 6, T__6 = 7, 
-    INT = 8, FLOAT = 9, WS = 10
+    T__7 = 8, AND = 9, OR = 10, FLOAT = 11, INT = 12, IDENT = 13, WS = 14
   };
 
   enum {
-    RuleRuleFile = 0, RuleRuleDecl = 1, RuleRating = 2, RuleExpr = 3, RuleValue = 4, 
-    RuleOp = 5
+    RuleRuleFile = 0, RuleRuleDecl = 1, RuleRating = 2, RuleExpr = 3, RuleOrExpr = 4, 
+    RuleAndExpr = 5, RuleComparison = 6, RuleValue = 7, RuleOp = 8
   };
 
   explicit ThresholdParser(antlr4::TokenStream *input);
@@ -42,6 +42,9 @@ public:
   class RuleDeclContext;
   class RatingContext;
   class ExprContext;
+  class OrExprContext;
+  class AndExprContext;
+  class ComparisonContext;
   class ValueContext;
   class OpContext; 
 
@@ -90,10 +93,7 @@ public:
   public:
     ExprContext(antlr4::ParserRuleContext *parent, size_t invokingState);
     virtual size_t getRuleIndex() const override;
-    std::vector<ValueContext *> value();
-    ValueContext* value(size_t i);
-    std::vector<OpContext *> op();
-    OpContext* op(size_t i);
+    OrExprContext *orExpr();
 
 
     virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
@@ -102,12 +102,62 @@ public:
 
   ExprContext* expr();
 
+  class  OrExprContext : public antlr4::ParserRuleContext {
+  public:
+    OrExprContext(antlr4::ParserRuleContext *parent, size_t invokingState);
+    virtual size_t getRuleIndex() const override;
+    std::vector<AndExprContext *> andExpr();
+    AndExprContext* andExpr(size_t i);
+    std::vector<antlr4::tree::TerminalNode *> OR();
+    antlr4::tree::TerminalNode* OR(size_t i);
+
+
+    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
+   
+  };
+
+  OrExprContext* orExpr();
+
+  class  AndExprContext : public antlr4::ParserRuleContext {
+  public:
+    AndExprContext(antlr4::ParserRuleContext *parent, size_t invokingState);
+    virtual size_t getRuleIndex() const override;
+    std::vector<ComparisonContext *> comparison();
+    ComparisonContext* comparison(size_t i);
+    std::vector<antlr4::tree::TerminalNode *> AND();
+    antlr4::tree::TerminalNode* AND(size_t i);
+
+
+    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
+   
+  };
+
+  AndExprContext* andExpr();
+
+  class  ComparisonContext : public antlr4::ParserRuleContext {
+  public:
+    ComparisonContext(antlr4::ParserRuleContext *parent, size_t invokingState);
+    virtual size_t getRuleIndex() const override;
+    std::vector<ValueContext *> value();
+    ValueContext* value(size_t i);
+    std::vector<OpContext *> op();
+    OpContext* op(size_t i);
+    ExprContext *expr();
+
+
+    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
+   
+  };
+
+  ComparisonContext* comparison();
+
   class  ValueContext : public antlr4::ParserRuleContext {
   public:
     ValueContext(antlr4::ParserRuleContext *parent, size_t invokingState);
     virtual size_t getRuleIndex() const override;
     antlr4::tree::TerminalNode *INT();
     antlr4::tree::TerminalNode *FLOAT();
+    antlr4::tree::TerminalNode *IDENT();
 
 
     virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;

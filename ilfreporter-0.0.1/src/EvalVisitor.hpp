@@ -17,34 +17,53 @@ public:
     }
 
     antlrcpp::Any visitExpr(ThresholdParser::ExprContext *ctx) override {
-        auto values = ctx->value();   // vector<ValueContext*>
-        auto ops    = ctx->op();      // vector<OpContext*>
+        return visit(ctx->orExpr());
+    }
 
+    antlrcpp::Any visitOrExpr(ThresholdParser::OrExprContext *ctx) override {
         std::ostringstream oss;
+        auto andExprs = ctx->andExpr();
 
-        // values: v0, v1, v2, ...
-        // ops:    o0, o1, ...
-        // expression: v0 o0 v1 o1 v2 ...
-
-        for (size_t i = 0; i < ops.size(); i++) {
-            std::string left  = values[i]->getText();
-            std::string right = values[i+1]->getText();
-            std::string op    = ops[i]->getText();
-
-            // Normalize so x is always on the left
-            if (right == "x") {
-                if (op == "<")  op = ">";
-                else if (op == "<=") op = ">=";
-                else if (op == ">")  op = "<";
-                else if (op == ">=") op = "<=";
-                // == stays ==
-                std::swap(left, right);
+        for (size_t i = 0; i < andExprs.size(); ++i) {
+            if (i > 0) {
+                oss << " or ";
             }
-
-            if (i > 0) oss << " and ";
-            oss << "x " << op << " " << right;
+            oss << "(" << std::any_cast<std::string>(visit(andExprs[i])) << ")";
         }
 
+        return oss.str();
+    }
+
+    antlrcpp::Any visitAndExpr(ThresholdParser::AndExprContext *ctx) override {
+        std::ostringstream oss;
+        auto comparisons = ctx->comparison();
+
+        for (size_t i = 0; i < comparisons.size(); ++i) {
+            if (i > 0) {
+                oss << " and ";
+            }
+            oss << "(" << std::any_cast<std::string>(visit(comparisons[i])) << ")";
+        }
+
+        return oss.str();
+    }
+
+    antlrcpp::Any visitComparison(ThresholdParser::ComparisonContext *ctx) override {
+        if (ctx->expr()) {
+            return std::string("(") + std::any_cast<std::string>(visit(ctx->expr())) + ")";
+        }
+
+        auto values = ctx->value();
+        auto ops = ctx->op();
+
+        std::ostringstream oss;
+        for (size_t i = 0; i < ops.size(); ++i) {
+            if (i > 0) {
+                oss << " and ";
+            }
+            oss << "(" << values[i]->getText() << " " << ops[i]->getText()
+                << " " << values[i + 1]->getText() << ")";
+        }
         return oss.str();
     }
 

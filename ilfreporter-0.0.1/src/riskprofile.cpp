@@ -41,6 +41,13 @@ void InherentReportGenerator::setupChaiScriptEvaluator(chaiscript::ChaiScript &c
                   return this->ratingByThreshold(threshold, value);
                 }),
            "ratingByThreshold");
+
+  chai.add(chaiscript::fun(
+                [this](const std::string& threshold, const std::map<std::string, chaiscript::Boxed_Value>& variables)
+                {
+                  return this->ratingByThresholdVars(threshold, variables);
+                }),
+           "ratingByThresholdVars");
   
 }
 

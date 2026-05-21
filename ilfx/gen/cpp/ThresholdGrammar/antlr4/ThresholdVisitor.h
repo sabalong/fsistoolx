@@ -27,6 +27,12 @@ public:
 
     virtual std::any visitExpr(ThresholdParser::ExprContext *context) = 0;
 
+    virtual std::any visitOrExpr(ThresholdParser::OrExprContext *context) = 0;
+
+    virtual std::any visitAndExpr(ThresholdParser::AndExprContext *context) = 0;
+
+    virtual std::any visitComparison(ThresholdParser::ComparisonContext *context) = 0;
+
     virtual std::any visitValue(ThresholdParser::ValueContext *context) = 0;
 
     virtual std::any visitOp(ThresholdParser::OpContext *context) = 0;

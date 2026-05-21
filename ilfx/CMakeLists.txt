@@ -76,6 +76,12 @@ if(NOT GSL_FOUND)
     endif()
 endif()
 
+if(TARGET GSL::gsl)
+    set(ILFX_GSL_LIBRARIES GSL::gsl)
+else()
+    set(ILFX_GSL_LIBRARIES ${GSL_LIBRARIES})
+endif()
+
 # Find all XSD schema files
 file(GLOB XSD_SCHEMAS "${CMAKE_CURRENT_SOURCE_DIR}/xsd/*.xsd")
 
@@ -111,8 +117,9 @@ target_include_directories(ilfx_lib PUBLIC
     ${XERCES_INCLUDE_DIR}
 )
 target_link_directories(ilfx_lib PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/../gofunct/build-macos
+    ${CMAKE_CURRENT_SOURCE_DIR}/../gofunct/gen
     /usr/local/lib
-    /opt/gsl/lib
 )
 target_link_libraries(ilfx_lib PUBLIC
     ${XERCES_LIBRARIES}
@@ -155,8 +162,7 @@ target_link_libraries(chaicli_test
     GTest::gtest
     GTest::gtest_main
     pthread
-    gsl
-    gslcblas
+    ${ILFX_GSL_LIBRARIES}
 )
 add_test(NAME ChaiCLITests COMMAND chaicli_test)
 
@@ -178,8 +184,7 @@ target_link_libraries(ilfx_cli
     absl::log_initialize
     absl::log_internal_message
     pthread
-    gsl
-    gslcblas
+    ${ILFX_GSL_LIBRARIES}
 )
 
 # Add ChaiScript CLI executable
@@ -195,8 +200,7 @@ target_link_libraries(chaiscript_cli
     absl::log
     absl::log_initialize
     pthread
-    gsl
-    gslcblas
+    ${ILFX_GSL_LIBRARIES}
 )
 
 # Add KPMR CLI executable
@@ -363,9 +367,7 @@ target_link_libraries(inherent_datasource_test
     pthread
     absl::base
     absl::log
-    gsl
-    gslcblas
-    libgofunct.a
+    ${ILFX_GSL_LIBRARIES}
 )
 
 # Enable testing

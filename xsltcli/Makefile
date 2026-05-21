@@ -4,7 +4,7 @@
 CC = gcc
 CFLAGS = `xml2-config --cflags` `xslt-config --cflags`
 LIBS = `xml2-config --libs` `xslt-config --libs`
-OUTPUT = xsltcli
+OUTPUT ?= xsltcli
 
 # Build target
 build: main.c

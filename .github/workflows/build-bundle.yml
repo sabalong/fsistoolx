@@ -11,8 +11,8 @@ on:
       - main
 
 jobs:
-  build:
-    runs-on: sabalong-runner2
+  build-linux-bundle:
+    runs-on: ubuntu-latest
 
     permissions:
       contents: write   # needed to create/upload release assets
@@ -45,7 +45,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: deps-bundle
+          name: deps-bundle-linux-amd64
           path: deps-bundle.tar.gz
           retention-days: 30
 
@@ -54,3 +54,50 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: deps-bundle.tar.gz
+
+  build-macos-bundle:
+    runs-on: macos-latest
+
+    permissions:
+      contents: write   # needed to create/upload release assets
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install TinyCC with libtcc
+        run: |
+          git clone --depth 1 https://repo.or.cz/tinycc.git "$RUNNER_TEMP/tinycc"
+          cd "$RUNNER_TEMP/tinycc"
+          ./configure --prefix="$RUNNER_TEMP/tinycc-prefix" --cc=clang
+          make -j"$(sysctl -n hw.ncpu)"
+          make install
+          echo "$RUNNER_TEMP/tinycc-prefix/bin" >> "$GITHUB_PATH"
+
+      - name: Install dependencies and build macOS bundle outputs
+        run: scripts/build_macos.sh --install-deps
+
+      - name: Package macOS bundle
+        run: |
+          tar -czf deps-bundle-macos.tar.gz \
+            gofunct/build-macos/libgofunct.a \
+            gofunct/build-macos/libgofunct.h \
+            ilfreporter-0.0.1/build-macos/ilfreporter \
+            ilfreporter-0.0.1/build-macos/kpmr_cli \
+            ilfreporter-0.0.1/build-macos/xpath_cli \
+            ilf/build-macos/bin \
+            ilfx/build-macos/bin \
+            xsltcli/build-macos/xsltcli
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deps-bundle-macos
+          path: deps-bundle-macos.tar.gz
+          retention-days: 30
+
+      - name: Create GitHub Release and upload asset
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: deps-bundle-macos.tar.gz

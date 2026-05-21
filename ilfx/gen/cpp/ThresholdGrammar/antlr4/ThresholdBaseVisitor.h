@@ -31,6 +31,18 @@ public:
     return visitChildren(ctx);
   }
 
+  virtual std::any visitOrExpr(ThresholdParser::OrExprContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitAndExpr(ThresholdParser::AndExprContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitComparison(ThresholdParser::ComparisonContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
   virtual std::any visitValue(ThresholdParser::ValueContext *ctx) override {
     return visitChildren(ctx);
   }

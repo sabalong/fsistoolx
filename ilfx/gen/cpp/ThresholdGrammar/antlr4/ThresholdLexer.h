@@ -13,7 +13,7 @@ class  ThresholdLexer : public antlr4::Lexer {
 public:
   enum {
     T__0 = 1, T__1 = 2, T__2 = 3, T__3 = 4, T__4 = 5, T__5 = 6, T__6 = 7, 
-    INT = 8, FLOAT = 9, WS = 10
+    T__7 = 8, AND = 9, OR = 10, FLOAT = 11, INT = 12, IDENT = 13, WS = 14
   };
 
   explicit ThresholdLexer(antlr4::CharStream *input);
