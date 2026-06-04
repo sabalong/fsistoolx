@@ -51,7 +51,10 @@ serialize_gnode_to_xml(xmlNodePtr parent, GNode *gnode)
             xmlNewChild(node, NULL, BAD_CAST "value", BAD_CAST value_str);
 
         if (data->remark) {
-            xmlNewChild(node, NULL, BAD_CAST "remark", BAD_CAST data->remark);
+            xmlNodePtr remarkNode = xmlNewChild(node, NULL, BAD_CAST "remark", NULL);
+            xmlNodePtr cdata = xmlNewCDataBlock(node->doc, BAD_CAST data->remark, 
+                                                strlen(data->remark));
+            xmlAddChild(remarkNode, cdata);
         }
  
         // Recursively serialize children
