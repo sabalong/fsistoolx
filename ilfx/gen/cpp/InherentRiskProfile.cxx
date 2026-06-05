@@ -1666,6 +1666,8 @@ RiskProfileTree_ (::xml_schema::dom::unique_ptr< ::xercesc::DOMDocument > d,
 }
 
 #include <ostream>
+#include <sstream>
+#include <iomanip>
 #include <xsd/cxx/tree/error-handler.hxx>
 #include <xsd/cxx/xml/dom/serialization-source.hxx>
 
@@ -2112,20 +2114,26 @@ operator<< (::xml_schema::list_stream& l,
 void
 operator<< (::xercesc::DOMElement& e, const WeightType& i)
 {
-  e << static_cast< const ::xsd::cxx::tree::fundamental_base< ::xml_schema::decimal, char, ::xml_schema::simple_type, ::xsd::cxx::tree::schema_type::decimal >& > (i);
+  std::ostringstream oss;
+  oss << std::fixed << std::setprecision(4) << static_cast<double>(i);
+  e << oss.str();
 }
 
 void
 operator<< (::xercesc::DOMAttr& a, const WeightType& i)
 {
-  a << static_cast< const ::xsd::cxx::tree::fundamental_base< ::xml_schema::decimal, char, ::xml_schema::simple_type, ::xsd::cxx::tree::schema_type::decimal >& > (i);
+  std::ostringstream oss;
+  oss << std::fixed << std::setprecision(4) << static_cast<double>(i);
+  a << oss.str();
 }
 
 void
 operator<< (::xml_schema::list_stream& l,
             const WeightType& i)
 {
-  l << static_cast< const ::xsd::cxx::tree::fundamental_base< ::xml_schema::decimal, char, ::xml_schema::simple_type, ::xsd::cxx::tree::schema_type::decimal >& > (i);
+  std::ostringstream oss;
+  oss << std::fixed << std::setprecision(4) << static_cast<double>(i);
+  l << oss.str();
 }
 
 void
