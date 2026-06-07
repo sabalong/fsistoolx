@@ -32,6 +32,8 @@ RUN zypper --non-interactive ref && \
       cmake \
       Xerces-c \
       boost-devel \
+      libcurl-devel \
+      protobuf-devel \
       gtest && \
     zypper clean
 
@@ -153,6 +155,7 @@ RUN go build -buildmode=c-archive -mod=vendor -o /gofunct/gen/libgofunct.a /gofu
 RUN cp /gofunct/gen/libgofunct.a /usr/local/lib/libgofunct.a
 
 # Build ilfx project
+COPY ./tools/opentelemetry-cpp-1.27.0 /tools/opentelemetry-cpp-1.27.0
 COPY ./ilfx /ilfx
 
 RUN cd /ilfx && \

@@ -13,6 +13,7 @@
 #include "absl/flags/parse.h"
 #include "absl/log/log.h"
 #include "absl/log/initialize.h"
+#include "otel_cli.hpp"
 
 ABSL_FLAG(std::string, threshold_file, "", "Input file containing threshold rules (one per line, format: rating:expression)");
 ABSL_FLAG(double, value, 0.0, "Value to evaluate against the threshold rules");
@@ -132,8 +133,14 @@ int main(int argc, char* argv[]) {
     std::string thresholdFile = absl::GetFlag(FLAGS_threshold_file);
     double value = absl::GetFlag(FLAGS_value);
     std::string variablesFlag = absl::GetFlag(FLAGS_variables);
+    auto otel = ilfx::otel::runtimeFromFlags("rating_threshold_cli");
+    ilfx::otel::RootSpan root(otel, "rating_threshold_cli.run");
+    root.setAttribute("threshold_file", thresholdFile);
+    root.setAttribute("value", value);
+    root.setAttribute("variables.present", !variablesFlag.empty());
 
     if (thresholdFile.empty()) {
+        root.markError("Threshold file must be specified");
         LOG(ERROR) << "Threshold file must be specified";
         std::cerr << "Usage: " << argv[0] << " --threshold_file=threshold.txt --value=50.5" << std::endl;
         std::cerr << "   or: " << argv[0] << " --threshold_file=threshold.txt --variables=x=50.5,y=10" << std::endl;
@@ -144,31 +151,47 @@ int main(int argc, char* argv[]) {
         std::cerr << "  3: 40 <= x < 60" << std::endl;
         std::cerr << "  4: 60 <= x < 80" << std::endl;
         std::cerr << "  5: 80 <= x <= 100" << std::endl;
-        return 1;
+        return root.finish(1);
     }
 
     // Read the threshold file
-    std::ifstream inputFile(thresholdFile);
-    if (!inputFile.is_open()) {
-        LOG(ERROR) << "Failed to open threshold file: " << thresholdFile;
-        std::cerr << "Error: Cannot open file '" << thresholdFile << "'" << std::endl;
-        return 1;
-    }
+    std::string thresholdContent;
+    {
+        ilfx::otel::ScopedSpan read_span(otel, "rating_threshold_cli.read_file");
+        std::ifstream inputFile(thresholdFile);
+        if (!inputFile.is_open()) {
+            const std::string message = "Failed to open threshold file: " + thresholdFile;
+            read_span.markError(message);
+            LOG(ERROR) << "Failed to open threshold file: " << thresholdFile;
+            std::cerr << "Error: Cannot open file '" << thresholdFile << "'" << std::endl;
+            return root.finish(1);
+        }
 
-    std::stringstream buffer;
-    buffer << inputFile.rdbuf();
-    std::string thresholdContent = buffer.str();
-    inputFile.close();
+        std::stringstream buffer;
+        buffer << inputFile.rdbuf();
+        thresholdContent = buffer.str();
+        inputFile.close();
+        read_span.setAttribute("threshold.bytes", static_cast<int>(thresholdContent.length()));
+    }
 
     LOG(INFO) << "Processing threshold file: " << thresholdFile;
     LOG(INFO) << "Evaluating value: " << value;
 
     try {
-        std::unordered_map<std::string, double> variables = variablesFlag.empty()
-            ? std::unordered_map<std::string, double>{{"x", value}}
-            : parseVariables(variablesFlag);
-
-        int rating = ratingByThreshold(thresholdContent, variables);
+        std::unordered_map<std::string, double> variables;
+        int rating;
+        {
+            ilfx::otel::ScopedSpan evaluate_span(otel, "rating_threshold_cli.evaluate_threshold");
+            variables = variablesFlag.empty()
+                ? std::unordered_map<std::string, double>{{"x", value}}
+                : parseVariables(variablesFlag);
+            evaluate_span.setAttribute("variables.count", static_cast<int>(variables.size()));
+            rating = ratingByThreshold(thresholdContent, variables);
+            evaluate_span.setAttribute("rating", rating);
+            if (rating == -1) {
+                evaluate_span.markError("No matching rating found");
+            }
+        }
         
         std::cout << std::endl;
         std::cout << "================================" << std::endl;
@@ -176,16 +199,20 @@ int main(int argc, char* argv[]) {
         std::cout << "================================" << std::endl;
         
         if (rating == -1) {
+            root.markError("No matching rating found");
             LOG(WARNING) << "No matching rating found for value " << value;
-            return 2;
+            return root.finish(2);
         }
         
         LOG(INFO) << "Successfully evaluated rating: " << rating;
-        return 0;
+        return root.finish(0);
         
     } catch (const std::exception& e) {
+        root.markError("Exception occurred: " + std::string(e.what()));
+        root.setAttribute("exception.type", "std::exception");
+        root.setAttribute("exception.message", std::string(e.what()));
         LOG(ERROR) << "Error evaluating threshold: " << e.what();
         std::cerr << "Error: " << e.what() << std::endl;
-        return 1;
+        return root.finish(1);
     }
 }
