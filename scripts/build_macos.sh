@@ -46,7 +46,9 @@ if [[ "${INSTALL_DEPS}" == "1" ]]; then
     libtool \
     libxml2 \
     libxslt \
+    nlohmann-json \
     pkg-config \
+    protobuf \
     xerces-c \
     xqilla \
     antlr4-cpp-runtime

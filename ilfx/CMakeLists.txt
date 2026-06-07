@@ -175,7 +175,9 @@ target_link_libraries(kpmr_lib PUBLIC
 # Find required packages
 find_package(GTest REQUIRED)
 
-add_subdirectory(thirdparty/abseil-cpp)
+if(NOT TARGET absl::base)
+    add_subdirectory(thirdparty/abseil-cpp)
+endif()
 
 # Add test executable
 add_executable(inherent_datasource_test
