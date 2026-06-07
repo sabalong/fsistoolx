@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 add_subdirectory(thirdparty/abseil-cpp)
+set(ILFREPORTER_ABSL_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/abseil-cpp")
 
 find_path(ANTLR4_INCLUDE_DIR
         NAMES antlr4-runtime.h
@@ -93,7 +94,9 @@ add_library(riskprofile
 )
 
 target_include_directories(riskprofile
+    BEFORE
     PUBLIC
+        ${ILFREPORTER_ABSL_INCLUDE_DIR}
         ${PROJECT_SOURCE_DIR}/src
         ${PROJECT_SOURCE_DIR}/gen/cpp
         ${PROJECT_SOURCE_DIR}/gen/cpp/ThresholdGrammar/antlr4
@@ -114,6 +117,12 @@ target_link_libraries(riskprofile
 
 add_executable(ilfreporter src/main.cpp)
 
+target_include_directories(ilfreporter
+    BEFORE
+    PRIVATE
+        ${ILFREPORTER_ABSL_INCLUDE_DIR}
+)
+
 target_link_libraries(ilfreporter
     PRIVATE
         riskprofile
@@ -130,7 +139,9 @@ endif()
 add_executable(xpath_cli src/xpath_cli.cpp)
 
 target_include_directories(xpath_cli
+    BEFORE
     PRIVATE
+        ${ILFREPORTER_ABSL_INCLUDE_DIR}
         ${XQILLA_INCLUDE_DIR}
 )
 
@@ -150,7 +161,9 @@ endif()
 add_executable(kpmr_cli src/kpmr_cli.cpp)
 
 target_include_directories(kpmr_cli
+    BEFORE
     PRIVATE
+        ${ILFREPORTER_ABSL_INCLUDE_DIR}
         ${XQILLA_INCLUDE_DIR}
 )
 

@@ -46,7 +46,9 @@ if [[ "${INSTALL_DEPS}" == "1" ]]; then
     libtool \
     libxml2 \
     libxslt \
+    nlohmann-json \
     pkg-config \
+    protobuf \
     xerces-c \
     xqilla \
     antlr4-cpp-runtime
@@ -105,6 +107,7 @@ mkdir -p "${ROOT_DIR}/gofunct/build-macos"
 )
 
 echo "==> Building ilfreporter"
+rm -rf "${ROOT_DIR}/ilfreporter-0.0.1/build-macos"
 cmake -S "${ROOT_DIR}/ilfreporter-0.0.1" -B "${ROOT_DIR}/ilfreporter-0.0.1/build-macos" \
   -DCMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH}"
 cmake --build "${ROOT_DIR}/ilfreporter-0.0.1/build-macos"
@@ -122,6 +125,7 @@ make -C "${ROOT_DIR}/ilf" \
   build_tree_cli
 
 echo "==> Building ilfx"
+rm -rf "${ROOT_DIR}/ilfx/build-macos"
 cmake -S "${ROOT_DIR}/ilfx" -B "${ROOT_DIR}/ilfx/build-macos" \
   -DCMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH}"
 cmake --build "${ROOT_DIR}/ilfx/build-macos"

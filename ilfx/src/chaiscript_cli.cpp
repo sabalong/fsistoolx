@@ -4,6 +4,7 @@
 #include "absl/log/log.h"
 #include "absl/log/initialize.h"
 #include "chaicli.hpp"
+#include "otel_cli.hpp"
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -92,6 +93,10 @@ int main(int argc, char* argv[]) {
     
     std::string script_path = absl::GetFlag(FLAGS_script);
     bool interactive = absl::GetFlag(FLAGS_interactive);
+    auto otel = ilfx::otel::runtimeFromFlags("chaiscript_cli");
+    ilfx::otel::RootSpan root(otel, "chaiscript_cli.run");
+    root.setAttribute("script_path", script_path);
+    root.setAttribute("interactive", interactive);
     
     // Create ChaiCLI instance
     ChaiClient::ChaiCLI cli;
@@ -100,31 +105,52 @@ int main(int argc, char* argv[]) {
         if (interactive) {
             // Run interactive REPL mode
             LOG(INFO) << "Starting interactive mode";
+            ilfx::otel::ScopedSpan interactive_span(otel, "chaiscript_cli.interactive_session");
             runInteractiveMode(cli);
-            return 0;
+            return root.finish(0);
         }
         
-        if (script_path.empty()) {
-            std::cerr << "Error: Either --script=<path> or --interactive must be specified\n";
-            std::cerr << "Use --help for more information\n";
-            return 1;
-        }
-        
-        // Validate that the file exists
-        if (!std::filesystem::exists(script_path)) {
-            std::cerr << "Error: Script file not found: " << script_path << "\n";
-            return 1;
+        {
+            ilfx::otel::ScopedSpan validate_span(otel, "chaiscript_cli.validate");
+            if (script_path.empty()) {
+                const std::string message = "Error: Either --script=<path> or --interactive must be specified";
+                validate_span.markError(message);
+                std::cerr << message << "\n";
+                std::cerr << "Use --help for more information\n";
+                return root.finish(1);
+            }
+            
+            // Validate that the file exists
+            if (!std::filesystem::exists(script_path)) {
+                const std::string message = "Error: Script file not found: " + script_path;
+                validate_span.markError(message);
+                std::cerr << message << "\n";
+                return root.finish(1);
+            }
         }
         
         LOG(INFO) << "Loading script from: " << script_path;
         
         // Read the script file
-        std::string script_content = readScriptFile(script_path);
+        std::string script_content;
+        {
+            ilfx::otel::ScopedSpan read_span(otel, "chaiscript_cli.read_script");
+            read_span.setAttribute("script_path", script_path);
+            script_content = readScriptFile(script_path);
+            read_span.setAttribute("script.bytes", static_cast<int>(script_content.length()));
+        }
         
         LOG(INFO) << "Executing script (" << script_content.length() << " bytes)";
         
         // Execute the script
-        ChaiClient::EvalResult result = cli.evaluate(script_content);
+        ChaiClient::EvalResult result;
+        {
+            ilfx::otel::ScopedSpan execute_span(otel, "chaiscript_cli.execute_script");
+            result = cli.evaluate(script_content);
+            if (result.status != SuccessOperationStatus) {
+                execute_span.markError("Script execution failed");
+            }
+        }
         
         if (result.status == SuccessOperationStatus) {
             LOG(INFO) << "Script executed successfully";
@@ -139,21 +165,29 @@ int main(int argc, char* argv[]) {
                 // If the result can't be printed, that's okay
             }
             
-            return 0;
+            return root.finish(0);
         } else {
             LOG(ERROR) << "Script execution failed";
             std::cerr << "Script execution failed\n";
-            return 1;
+            return root.finish(1);
         }
         
     } catch (const chaiscript::exception::eval_error& e) {
+        const std::string message = "ChaiScript evaluation error: " + std::string(e.what());
+        root.markError(message);
+        root.setAttribute("exception.type", "chaiscript::exception::eval_error");
+        root.setAttribute("exception.message", std::string(e.what()));
         LOG(ERROR) << "ChaiScript evaluation error: " << e.what();
         std::cerr << "ChaiScript Error: " << e.what() << "\n";
         std::cerr << "  " << e.pretty_print() << "\n";
-        return 1;
+        return root.finish(1);
     } catch (const std::exception& e) {
+        const std::string message = "Exception occurred: " + std::string(e.what());
+        root.markError(message);
+        root.setAttribute("exception.type", "std::exception");
+        root.setAttribute("exception.message", std::string(e.what()));
         LOG(ERROR) << "Exception occurred: " << e.what();
         std::cerr << "Error: " << e.what() << "\n";
-        return 1;
+        return root.finish(1);
     }
 }

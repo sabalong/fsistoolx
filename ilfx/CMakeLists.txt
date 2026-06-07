@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.16)
 project(ilfx VERSION 1.0.0 LANGUAGES CXX)
 
 # Set C++ standard
@@ -9,6 +9,40 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
+
+option(ILFX_ENABLE_OTEL "Enable OpenTelemetry OTLP HTTP tracing for ilfx CLI executables" ON)
+
+if(ILFX_ENABLE_OTEL)
+    set(ILFX_OTEL_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../tools/opentelemetry-cpp-1.27.0")
+    if(NOT EXISTS "${ILFX_OTEL_SOURCE_DIR}/CMakeLists.txt")
+        message(FATAL_ERROR "ILFX_ENABLE_OTEL is ON but OpenTelemetry source was not found at ${ILFX_OTEL_SOURCE_DIR}")
+    endif()
+
+    if(DEFINED BUILD_TESTING)
+        set(_ILFX_HAD_BUILD_TESTING ON)
+        set(_ILFX_SAVED_BUILD_TESTING ${BUILD_TESTING})
+    else()
+        set(_ILFX_HAD_BUILD_TESTING OFF)
+    endif()
+    set(WITH_OTLP_HTTP ON CACHE BOOL "" FORCE)
+    set(WITH_OTLP_GRPC OFF CACHE BOOL "" FORCE)
+    set(WITH_OTLP_FILE OFF CACHE BOOL "" FORCE)
+    set(WITH_ZIPKIN OFF CACHE BOOL "" FORCE)
+    set(WITH_PROMETHEUS OFF CACHE BOOL "" FORCE)
+    set(WITH_ELASTICSEARCH OFF CACHE BOOL "" FORCE)
+    set(WITH_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(WITH_EXAMPLES_HTTP OFF CACHE BOOL "" FORCE)
+    set(WITH_FUNC_TESTS OFF CACHE BOOL "" FORCE)
+    set(WITH_BENCHMARK OFF CACHE BOOL "" FORCE)
+    set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+    set(OPENTELEMETRY_INSTALL OFF CACHE BOOL "" FORCE)
+    add_subdirectory("${ILFX_OTEL_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/opentelemetry-cpp" EXCLUDE_FROM_ALL)
+    if(_ILFX_HAD_BUILD_TESTING)
+        set(BUILD_TESTING ${_ILFX_SAVED_BUILD_TESTING} CACHE BOOL "" FORCE)
+    else()
+        unset(BUILD_TESTING CACHE)
+    endif()
+endif()
 
 # Xerces
 find_path(XERCES_INCLUDE_DIR
@@ -141,7 +175,9 @@ target_link_libraries(kpmr_lib PUBLIC
 # Find required packages
 find_package(GTest REQUIRED)
 
-add_subdirectory(thirdparty/abseil-cpp)
+if(NOT TARGET absl::base)
+    add_subdirectory(thirdparty/abseil-cpp)
+endif()
 
 # Add test executable
 add_executable(inherent_datasource_test
@@ -351,6 +387,29 @@ target_link_libraries(rating_threshold_cli
     absl::log_internal_message
     pthread
 )
+
+set(ILFX_CLI_TARGETS
+    ilfx_cli
+    chaiscript_cli
+    kpmr_cli
+    riskprofile_cli
+    riskprofilekpmr_cli
+    threshold_cli
+    exprtk_cli
+    scoreratingparser_cli
+    rating_threshold_cli
+)
+
+if(ILFX_ENABLE_OTEL)
+    foreach(_ilfx_cli_target IN LISTS ILFX_CLI_TARGETS)
+        target_compile_definitions(${_ilfx_cli_target} PRIVATE ILFX_ENABLE_OTEL)
+        target_link_libraries(${_ilfx_cli_target}
+            opentelemetry_exporter_otlp_http
+            opentelemetry_trace
+            opentelemetry_resources
+        )
+    endforeach()
+endif()
 
 target_include_directories(inherent_datasource_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}

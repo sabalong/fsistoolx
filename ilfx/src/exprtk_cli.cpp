@@ -9,6 +9,7 @@
 #include "absl/flags/parse.h"
 #include "absl/log/log.h"
 #include "absl/log/initialize.h"
+#include "otel_cli.hpp"
 
 ABSL_FLAG(std::string, expr, "", "Expression to evaluate (e.g., 'x >= 0 and x < 10')");
 ABSL_FLAG(double, x, 0.0, "Value of variable x");
@@ -60,36 +61,57 @@ int main(int argc, char* argv[]) {
     std::string file = absl::GetFlag(FLAGS_file);
     double x = absl::GetFlag(FLAGS_x);
     std::string variablesFlag = absl::GetFlag(FLAGS_variables);
-
-    if (expr.empty() && file.empty()) {
-        LOG(ERROR) << "Either --expr or --file must be specified";
-        std::cerr << "Usage: " << argv[0] << " --expr='x >= 0 and x < 10' --x=5" << std::endl;
-        std::cerr << "   or: " << argv[0] << " --expr='x >= 0 and y < 10' --variables=x=5,y=7" << std::endl;
-        std::cerr << "   or: " << argv[0] << " --file=expression.txt --x=5" << std::endl;
-        return 1;
-    }
+    auto otel = ilfx::otel::runtimeFromFlags("exprtk_cli");
+    ilfx::otel::RootSpan root(otel, "exprtk_cli.run");
+    root.setAttribute("expr.present", !expr.empty());
+    root.setAttribute("file", file);
+    root.setAttribute("x", x);
+    root.setAttribute("variables.present", !variablesFlag.empty());
 
     std::string expression;
-    if (!file.empty()) {
-        std::ifstream inputFile(file);
-        if (!inputFile.is_open()) {
-            LOG(ERROR) << "Failed to open file: " << file;
-            return 1;
+    {
+        ilfx::otel::ScopedSpan read_span(otel, "exprtk_cli.read_input");
+        if (expr.empty() && file.empty()) {
+            const std::string message = "Either --expr or --file must be specified";
+            read_span.markError(message);
+            LOG(ERROR) << message;
+            std::cerr << "Usage: " << argv[0] << " --expr='x >= 0 and x < 10' --x=5" << std::endl;
+            std::cerr << "   or: " << argv[0] << " --expr='x >= 0 and y < 10' --variables=x=5,y=7" << std::endl;
+            std::cerr << "   or: " << argv[0] << " --file=expression.txt --x=5" << std::endl;
+            return root.finish(1);
         }
-        std::getline(inputFile, expression);
-        inputFile.close();
-    } else {
-        expression = expr;
+
+        if (!file.empty()) {
+            std::ifstream inputFile(file);
+            if (!inputFile.is_open()) {
+                const std::string message = "Failed to open file: " + file;
+                read_span.markError(message);
+                LOG(ERROR) << "Failed to open file: " << file;
+                return root.finish(1);
+            }
+            std::getline(inputFile, expression);
+            inputFile.close();
+        } else {
+            expression = expr;
+        }
+        read_span.setAttribute("expression.length", static_cast<int>(expression.length()));
     }
 
     LOG(INFO) << "Evaluating expression: " << expression;
     LOG(INFO) << "With x = " << x;
 
     try {
-        std::unordered_map<std::string, double> variables = variablesFlag.empty()
-            ? std::unordered_map<std::string, double>{{"x", x}}
-            : parseVariables(variablesFlag);
-        bool result = evalExprWithVariables(variables, expression);
+        std::unordered_map<std::string, double> variables;
+        bool result;
+        {
+            ilfx::otel::ScopedSpan evaluate_span(otel, "exprtk_cli.evaluate_expression");
+            variables = variablesFlag.empty()
+                ? std::unordered_map<std::string, double>{{"x", x}}
+                : parseVariables(variablesFlag);
+            evaluate_span.setAttribute("variables.count", static_cast<int>(variables.size()));
+            result = evalExprWithVariables(variables, expression);
+            evaluate_span.setAttribute("result", result);
+        }
         
         std::cout << "Expression: " << expression << std::endl;
         for (const auto& variable : variables) {
@@ -98,11 +120,14 @@ int main(int argc, char* argv[]) {
         std::cout << "Result: " << (result ? "true" : "false") << std::endl;
         
         LOG(INFO) << "Successfully evaluated expression";
-        return result ? 0 : 1;
+        return root.finish(result ? 0 : 1);
         
     } catch (const std::exception& e) {
+        root.markError("Exception occurred: " + std::string(e.what()));
+        root.setAttribute("exception.type", "std::exception");
+        root.setAttribute("exception.message", std::string(e.what()));
         LOG(ERROR) << "Error evaluating expression: " << e.what();
         std::cerr << "Error: " << e.what() << std::endl;
-        return 1;
+        return root.finish(1);
     }
 }

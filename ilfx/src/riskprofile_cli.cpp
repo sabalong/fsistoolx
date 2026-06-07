@@ -5,6 +5,7 @@
 #include "absl/log/initialize.h"
 #include "absl/strings/str_format.h"
 #include "riskprofile.hpp"
+#include "otel_cli.hpp"
 #include <iostream>
 #include <fstream>
 #include <filesystem>
@@ -43,39 +44,59 @@ int main(int argc, char *argv[])
     std::string output_path = absl::GetFlag(FLAGS_output_path);
     std::string output_inherent_riskprofile = absl::GetFlag(FLAGS_output_inherent_riskprofile);
     std::string output_kpmr_riskprofile = absl::GetFlag(FLAGS_output_kpmr_riskprofile);
+    auto otel = ilfx::otel::runtimeFromFlags("riskprofile_cli");
+    ilfx::otel::RootSpan root(otel, "riskprofile_cli.run");
+    root.setAttribute("inherent_datasource", inherent_datasource);
+    root.setAttribute("kpmr_datasource", kpmr_datasource);
+    root.setAttribute("inherent_riskprofile", inherent_riskprofile);
+    root.setAttribute("kpmr_riskprofile", kpmr_riskprofile);
+    root.setAttribute("output_path", output_path);
+    root.setAttribute("output_inherent_riskprofile", output_inherent_riskprofile);
+    root.setAttribute("output_kpmr_riskprofile", output_kpmr_riskprofile);
 
     // Validate required flags
-    bool has_error = false;
-    if (inherent_datasource.empty())
     {
-        std::cerr << "Error: --inherent_datasource is required\n";
-        has_error = true;
-    }
+        ilfx::otel::ScopedSpan validate_span(otel, "riskprofile_cli.validate");
+        bool has_error = false;
+        if (inherent_datasource.empty())
+        {
+            const std::string message = "Error: --inherent_datasource is required";
+            validate_span.markError(message);
+            std::cerr << message << "\n";
+            has_error = true;
+        }
 
-    if (inherent_riskprofile.empty())
-    {
-        std::cerr << "Error: --inherent_riskprofile is required\n";
-        has_error = true;
-    }
+        if (inherent_riskprofile.empty())
+        {
+            const std::string message = "Error: --inherent_riskprofile is required";
+            validate_span.markError(message);
+            std::cerr << message << "\n";
+            has_error = true;
+        }
 
-    if (has_error)
-    {
-        std::cerr << "\nUsage: riskprofile_cli --inherent_datasource=<path> --kpmr_datasource=<path> "
-                  << "--inherent_riskprofile=<path> --kpmr_riskprofile=<path> [--output_path=<path>]\n";
-        return 1;
-    }
+        if (has_error)
+        {
+            std::cerr << "\nUsage: riskprofile_cli --inherent_datasource=<path> --kpmr_datasource=<path> "
+                      << "--inherent_riskprofile=<path> --kpmr_riskprofile=<path> [--output_path=<path>]\n";
+            return root.finish(1);
+        }
 
-    // Validate that files exist
-    if (!std::filesystem::exists(inherent_datasource))
-    {
-        std::cerr << "Error: Inherent DataSource file not found: " << inherent_datasource << "\n";
-        return 1;
-    }
+        // Validate that files exist
+        if (!std::filesystem::exists(inherent_datasource))
+        {
+            const std::string message = "Error: Inherent DataSource file not found: " + inherent_datasource;
+            validate_span.markError(message);
+            std::cerr << message << "\n";
+            return root.finish(1);
+        }
 
-    if (!std::filesystem::exists(inherent_riskprofile))
-    {
-        std::cerr << "Error: Inherent Risk Profile file not found: " << inherent_riskprofile << "\n";
-        return 1;
+        if (!std::filesystem::exists(inherent_riskprofile))
+        {
+            const std::string message = "Error: Inherent Risk Profile file not found: " + inherent_riskprofile;
+            validate_span.markError(message);
+            std::cerr << message << "\n";
+            return root.finish(1);
+        }
     }
 
     try
@@ -83,10 +104,21 @@ int main(int argc, char *argv[])
         LOG(INFO) << "Loading Inherent DataSource from: " << inherent_datasource;
 
         // Parse XML files with correct namespaces
-        std::shared_ptr<inherent::datasource::DataType> inherentDataSources = std::move(inherent::datasource::data(inherent_datasource));
+        std::shared_ptr<inherent::datasource::DataType> inherentDataSources;
+        {
+            ilfx::otel::ScopedSpan load_span(otel, "riskprofile_cli.load_data");
+            load_span.setAttribute("inherent_datasource", inherent_datasource);
+            load_span.setAttribute("inherent_riskprofile", inherent_riskprofile);
+            inherentDataSources = std::move(inherent::datasource::data(inherent_datasource));
 
-        LOG(INFO) << "Loading Inherent Risk Profile from: " << inherent_riskprofile;
-        std::shared_ptr<RiskProfileTree> inherentRiskProfile = std::move(RiskProfileTree_(inherent_riskprofile));
+            LOG(INFO) << "Loading Inherent Risk Profile from: " << inherent_riskprofile;
+        }
+        std::shared_ptr<RiskProfileTree> inherentRiskProfile;
+        {
+            ilfx::otel::ScopedSpan load_span(otel, "riskprofile_cli.load_riskprofile");
+            load_span.setAttribute("inherent_riskprofile", inherent_riskprofile);
+            inherentRiskProfile = std::move(RiskProfileTree_(inherent_riskprofile));
+        }
 
         LOG(INFO) << "All data loaded successfully";
 
@@ -110,7 +142,14 @@ int main(int argc, char *argv[])
 
         // Evaluate individual profiles
         LOG(INFO) << "Evaluating Inherent Risk Profile...";
-        OperationStatus inherent_status = evaluator.evaluateInherentRiskProfile();
+        OperationStatus inherent_status;
+        {
+            ilfx::otel::ScopedSpan evaluate_span(otel, "riskprofile_cli.evaluate_inherent_riskprofile");
+            inherent_status = evaluator.evaluateInherentRiskProfile();
+            if (inherent_status != SuccessOperationStatus) {
+                evaluate_span.markError("Inherent Risk Profile evaluation failed");
+            }
+        }
         if (inherent_status == SuccessOperationStatus)
         {
             LOG(INFO) << "Inherent Risk Profile evaluation completed";
@@ -122,6 +161,8 @@ int main(int argc, char *argv[])
 
         try
         {
+            ilfx::otel::ScopedSpan serialize_span(otel, "riskprofile_cli.serialize_output");
+            serialize_span.setAttribute("output_inherent_riskprofile", output_inherent_riskprofile);
             LOG(INFO) << "Writing evaluated Inherent Risk Profile XML to: " << output_inherent_riskprofile;
 
             // Create namespace map for serialization
@@ -139,17 +180,21 @@ int main(int argc, char *argv[])
         }
         catch (const xml_schema::exception &e)
         {
+            root.markError("Failed to write Inherent Risk Profile XML: " + std::string(e.what()));
             LOG(ERROR) << "Failed to write Inherent Risk Profile XML: " << e.what();
             std::cerr << "Error writing XML: " << e.what() << "\n";
             // Don't fail the whole program, just log the error
         }
 
-        return 0;
+        return root.finish(0);
     }
     catch (const std::exception &e)
     {
+        root.markError("Exception occurred: " + std::string(e.what()));
+        root.setAttribute("exception.type", "std::exception");
+        root.setAttribute("exception.message", std::string(e.what()));
         LOG(ERROR) << "Error: " << e.what();
         std::cerr << "Error: " << e.what() << "\n";
-        return 1;
+        return root.finish(1);
     }
 }
