@@ -16,10 +16,18 @@
 #include <map>
 #include <sstream>
 #include <unordered_map>
+#include <iomanip>
 
 // Forward declaration
 bool evalExprWithX(double x, const std::string& expr);
 bool evalExprWithVariables(const std::unordered_map<std::string, double>& variables, const std::string& expr);
+
+// Helper function to format double with 10 decimal places
+inline std::string formatDouble(double value) {
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(10) << value;
+    return oss.str();
+}
 
 namespace riskprofile {
     inline double boxedValueToThresholdDouble(const std::string& name, const chaiscript::Boxed_Value& value) {
@@ -814,8 +822,8 @@ namespace riskprofile {
             }
 
             std::cout << indent << "    Evaluated Value Rule Result: " << result << std::endl;
-
-            node.computed_value(std::to_string(result));
+            
+            node.computed_value(formatDouble(result));
         }
 
         if (node.rating_rule().present() && !node.rating_rule().get().empty()) {
