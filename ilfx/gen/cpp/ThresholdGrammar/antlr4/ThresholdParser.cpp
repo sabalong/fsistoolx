@@ -600,12 +600,12 @@ ThresholdParser::ValueContext::ValueContext(ParserRuleContext *parent, size_t in
   : ParserRuleContext(parent, invokingState) {
 }
 
-tree::TerminalNode* ThresholdParser::ValueContext::INT() {
-  return getToken(ThresholdParser::INT, 0);
-}
-
 tree::TerminalNode* ThresholdParser::ValueContext::FLOAT() {
   return getToken(ThresholdParser::FLOAT, 0);
+}
+
+tree::TerminalNode* ThresholdParser::ValueContext::INT() {
+  return getToken(ThresholdParser::INT, 0);
 }
 
 tree::TerminalNode* ThresholdParser::ValueContext::IDENT() {
