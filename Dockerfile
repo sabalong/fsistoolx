@@ -163,6 +163,7 @@ RUN cd /ilfx && \
     mkdir -p build && \
     cd build && \
     cmake \
+      -DILFX_ENABLE_OTEL=OFF \
       -DCMAKE_PREFIX_PATH="/usr/local;/opt/gsl" \
       -DCMAKE_C_FLAGS="-I/opt/gsl/include" \
       -DCMAKE_CXX_FLAGS="-I/opt/gsl/include" \
