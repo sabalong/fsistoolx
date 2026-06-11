@@ -30,8 +30,8 @@ comparison
     ;
 
 value
-    : INT
-    | FLOAT
+    : FLOAT
+    | INT
     | IDENT
     ;
 
@@ -45,7 +45,7 @@ op
 
 AND    : [aA][nN][dD] | '&&' ;
 OR     : [oO][rR] | '||' ;
-FLOAT  : [0-9]+ '.' [0-9]+ ;
-INT    : [0-9]+ ;
+FLOAT  : '-'? [0-9]+ '.' [0-9]+ ;
+INT    : '-'? [0-9]+ ;
 IDENT  : [a-zA-Z_][a-zA-Z_0-9]* ;
 WS     : [ \t\r\n]+ -> skip ;
