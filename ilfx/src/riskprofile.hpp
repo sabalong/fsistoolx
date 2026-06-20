@@ -13,10 +13,17 @@
 #include "ThresholdParser.h"
 #include "EvalVisitor.hpp"
 #include "scoreratingparser.hpp"
+#include "absl/log/log.h"
+#include "exprtk/exprtk.hpp"
 #include <map>
 #include <sstream>
 #include <unordered_map>
 #include <iomanip>
+#include <algorithm>
+#include <cctype>
+#include <memory>
+#include <set>
+#include <vector>
 
 // Forward declaration
 bool evalExprWithX(double x, const std::string& expr);
@@ -81,9 +88,76 @@ namespace riskprofile {
         std::shared_ptr<kpmr::datasource::ConsolidatedAssessmentType> datasources;
         std::shared_ptr<RiskProfileTree> inherentRiskProfile;
         std::shared_ptr<kpmr::riskprofile::kpmr_risk_profile_tree> kpmrRiskProfile;
+
+        struct ThresholdCompiledRule {
+            int rating = -1;
+            std::string expressionText;
+            std::unordered_map<std::string, double> boundVariables;
+            exprtk::symbol_table<double> symbolTable;
+            exprtk::expression<double> expression;
+            bool compiled = false;
+
+            ThresholdCompiledRule(int ruleRating,
+                                  const std::string& compiledExpression,
+                                  const std::vector<std::string>& variableNames)
+                : rating(ruleRating), expressionText(compiledExpression) {
+                for (const auto& name : variableNames) {
+                    boundVariables.emplace(name, 0.0);
+                }
+                for (auto& variable : boundVariables) {
+                    symbolTable.add_variable(variable.first, variable.second);
+                }
+                symbolTable.add_constants();
+                expression.register_symbol_table(symbolTable);
+
+                exprtk::parser<double> parser;
+                compiled = parser.compile(expressionText, expression);
+                if (!compiled) {
+                    DLOG(INFO) << "Error compiling threshold expression: " << expressionText
+                               << " error: " << parser.error();
+                }
+            }
+
+            bool evaluate(const std::unordered_map<std::string, double>& variables) {
+                for (auto& variable : boundVariables) {
+                    auto it = variables.find(variable.first);
+                    variable.second = (it != variables.end()) ? it->second : 0.0;
+                }
+                return compiled && expression.value();
+            }
+        };
+
+        struct ThresholdProgram {
+            std::vector<std::unique_ptr<ThresholdCompiledRule>> rules;
+        };
+
+        mutable std::unordered_map<std::string, RiskProfileNodeType*> inherentProfileByCode;
+        mutable std::unordered_map<std::string, kpmr::riskprofile::NodeType*> kpmrProfileByCode;
+        mutable std::unordered_map<std::string, inherent::datasource::ItemType*> inherentDataSourceByCode;
+        mutable std::unordered_map<std::string, kpmr::datasource::RiskGroupType*> kpmrGroupByCode;
+        mutable std::unordered_map<std::string, kpmr::datasource::RiskItemType*> kpmrItemByCode;
+        mutable std::unordered_map<std::string, double> inherentConsolidateCache;
+        mutable std::unordered_map<std::string, double> kpmrConsolidateCache;
+        mutable std::unordered_map<std::string, std::unique_ptr<ThresholdProgram>> thresholdProgramCache;
+        mutable std::unordered_map<std::string, std::unordered_map<int, double>> ratingToScoreCache;
+        mutable bool indexesBuilt = false;
         
         // Helper function to set up ChaiScript evaluator with all necessary bindings
         void setupChaiScriptEvaluator(chaiscript::ChaiScript& chai);
+
+        static std::string trim(std::string value);
+        static std::string thresholdProgramCacheKey(
+            const std::string& threshold,
+            const std::unordered_map<std::string, double>& variables);
+        void resetEvaluationCaches();
+        void ensureIndexes();
+        void indexInherentNode(RiskProfileNodeType& node);
+        void indexKPMRNode(kpmr::riskprofile::NodeType& node);
+        void indexKPMRItem(kpmr::datasource::RiskItemType& item);
+        ThresholdProgram& thresholdProgramFor(
+            const std::string& threshold,
+            const std::unordered_map<std::string, double>& variables);
+        const std::unordered_map<int, double>& ratingToScoreMap(const std::string& ratingToScoreStr);
 
     public:
         Evaluator(std::shared_ptr<inherent::datasource::DataType> inherentDataSources,
@@ -96,447 +170,160 @@ namespace riskprofile {
         OperationStatus evaluateKPMRRiskProfile();
 
         double findConsolidateByCode(const std::string& code) {
-         for (auto item : inherentDataSources->list().item()) {
-                if (item.code() == code) {
-                    return item.consolidate();
-                }
-         }
+            ensureIndexes();
+            auto cacheIt = inherentConsolidateCache.find(code);
+            if (cacheIt != inherentConsolidateCache.end()) {
+                return cacheIt->second;
+            }
 
-         return 0.0;
+            auto itemIt = inherentDataSourceByCode.find(code);
+            if (itemIt == inherentDataSourceByCode.end()) {
+                return 0.0;
+            }
+
+            double value = itemIt->second->consolidate();
+            inherentConsolidateCache[code] = value;
+            return value;
         };
 
         double computedScoreByCode(const std::string& code) {
-            // Helper function to recursively search through nodes
-            std::function<double(const RiskProfileNodeType&)> searchNode = 
-                [&](const RiskProfileNodeType& node) -> double {
-                    if (node.Profile_ID() == code) {
-                        if (node.computed_score().present()) {
-                            return std::strtod(node.computed_score().get().c_str(), nullptr);
-                        }
-                        return 0.0;
-                    }
-                    
-                    // Recursively search in children
-                    for (const auto& child : node.RiskProfileNode()) {
-                        double result = searchNode(child);
-                        if (result != 0.0 || child.Profile_ID() == code) {
-                            return result;
-                        }
-                    }
-                    
-                    return 0.0;
-                };
-            
-            for (const auto& item : inherentRiskProfile->RiskProfileNode()) {
-                double result = searchNode(item);
-                if (result != 0.0 || item.Profile_ID() == code) {
-                    return result;
-                }
+            ensureIndexes();
+            auto it = inherentProfileByCode.find(code);
+            if (it != inherentProfileByCode.end() && it->second->computed_score().present()) {
+                return std::strtod(it->second->computed_score().get().c_str(), nullptr);
             }
-            
             return 0.0;
         };
 
         double computedValueByCode(const std::string& code) {
-            // Helper function to recursively search through nodes
-            std::function<double(const RiskProfileNodeType&)> searchNode = 
-                [&](const RiskProfileNodeType& node) -> double {
-                    if (node.Profile_ID() == code) {
-                        if (node.computed_value().present()) {
-                            return std::strtod(node.computed_value().get().c_str(), nullptr);
-                        }
-                        return 0.0;
-                    }
-                    
-                    // Recursively search in children
-                    for (const auto& child : node.RiskProfileNode()) {
-                        double result = searchNode(child);
-                        if (result != 0.0 || child.Profile_ID() == code) {
-                            return result;
-                        }
-                    }
-                    
-                    return 0.0;
-                };
-            
-            for (const auto& item : inherentRiskProfile->RiskProfileNode()) {
-                double result = searchNode(item);
-                if (result != 0.0 || item.Profile_ID() == code) {
-                    return result;
-                }
+            ensureIndexes();
+            auto it = inherentProfileByCode.find(code);
+            if (it != inherentProfileByCode.end() && it->second->computed_value().present()) {
+                return std::strtod(it->second->computed_value().get().c_str(), nullptr);
             }
-            
             return 0.0;
         };
 
         double weightByCode(const std::string& code) {
-            // Helper function to recursively search through nodes
-            std::function<double(const RiskProfileNodeType&)> searchNode = 
-                [&](const RiskProfileNodeType& node) -> double {
-                    if (node.Profile_ID() == code) {
-                        if (node.weight().present()) {
-                            return node.weight().get();
-                        }
-                        return 1.0;
-                    }
-                    
-                    // Recursively search in children
-                    for (const auto& child : node.RiskProfileNode()) {
-                        double result = searchNode(child);
-                        if (result != 0.0 || child.Profile_ID() == code) {
-                            return result;
-                        }
-                    }
-                    
-                    return 1.0;
-                };
-            
-            for (const auto& item : inherentRiskProfile->RiskProfileNode()) {
-                double result = searchNode(item);
-                if (result != 0.0 || item.Profile_ID() == code) {
-                    return result;
-                }
+            ensureIndexes();
+            auto it = inherentProfileByCode.find(code);
+            if (it == inherentProfileByCode.end()) {
+                return 0.0;
             }
-            
-            return 0.0;
+            return it->second->weight().present() ? static_cast<double>(it->second->weight().get()) : 1.0;
         };
 
         double weightByCodeKPMR(const std::string& code) {
-            // Helper function to recursively search through KPMR nodes
-            std::function<double(const kpmr::riskprofile::NodeType&)> searchNode = 
-                [&](const kpmr::riskprofile::NodeType& node) -> double {
-                    if (node.profile_id() == code) {
-                        if (node.weight().present()) {
-                            return node.weight().get();
-                        }
-                        return 1.0;
-                    }
-                    
-                    // Recursively search in children if present
-                    if (node.children().present()) {
-                        for (const auto& child : node.children()->node()) {
-                            double result = searchNode(child);
-                            if (result != 0.0 || child.profile_id() == code) {
-                                return result;
-                            }
-                        }
-                    }
-                    
-                    return 1.0;
-                };
-            
-            for (const auto& item : kpmrRiskProfile->node()) {
-                double result = searchNode(item);
-                if (result != 0.0 || item.profile_id() == code) {
-                    return result;
-                }
+            ensureIndexes();
+            auto it = kpmrProfileByCode.find(code);
+            if (it == kpmrProfileByCode.end()) {
+                return 0.0;
             }
-            
-            return 0.0;
+            return it->second->weight().present() ? static_cast<double>(it->second->weight().get()) : 1.0;
         };
 
         double computedWeightedScoreByCode(const std::string& code) {
-            // Helper function to recursively search through nodes
-            std::function<double(const RiskProfileNodeType&)> searchNode = 
-                [&](const RiskProfileNodeType& node) -> double {
-                    if (node.Profile_ID() == code) {
-                        std::string scoreRule = node.score_rule().present() ? node.score_rule().get() : "";
-                        if (scoreRule.empty()) {
-                            return 0.0;
-                        }
-
-                        LOG(INFO) << "Evaluating score for code: " << code << " using rule: " << scoreRule;
-
-                        chaiscript::ChaiScript chai;
-                        setupChaiScriptEvaluator(chai);
-
-                        LOG(INFO) << "hooho";
-                        auto score = chai.eval<double>(scoreRule);
-
-                        if (node.weight().present()) {
-                            score *= node.weight().get();
-                        }
-
-                        LOG(INFO) << "hooh2o";
-
-                        return score;
-                    }
-                    
-                    // Recursively search in children
-                    for (const auto& child : node.RiskProfileNode()) {
-                        double result = searchNode(child);
-                        if (result != 0.0 || child.Profile_ID() == code) {
-                            return result;
-                        }
-                    }
-                    
-                    return 0.0;
-                };
-            
-            for (const auto& item : inherentRiskProfile->RiskProfileNode()) {
-                double result = searchNode(item);
-                if (result != 0.0 || item.Profile_ID() == code) {
-                    return result;
-                }
+            ensureIndexes();
+            auto it = inherentProfileByCode.find(code);
+            if (it == inherentProfileByCode.end()) {
+                return 0.0;
             }
-            
+
+            RiskProfileNodeType& node = *it->second;
+            if (node.computed_weighted_score().present()) {
+                return std::strtod(node.computed_weighted_score().get().c_str(), nullptr);
+            }
+            if (node.computed_score().present()) {
+                return std::strtod(node.computed_score().get().c_str(), nullptr) * weightByCode(code);
+            }
             return 0.0;
         };
 
         double computedWeightedScoreByCodeKPMR(const std::string& code) {
-            // Helper function to recursively search through KPMR nodes
-            std::function<double(const kpmr::riskprofile::NodeType&)> searchNode =
-                [&](const kpmr::riskprofile::NodeType& node) -> double {
-                    if (node.profile_id() == code) {
-                        std::string scoreRule = node.score_rule().present() ? node.score_rule().get() : "";
-                        if (scoreRule.empty()) {
-                            return 0.0;
-                        }
-
-                        LOG(INFO) << "Evaluating KPMR score for code: " << code << " using rule: " << scoreRule;
-
-                        chaiscript::ChaiScript chai;
-                        setupChaiScriptEvaluator(chai);
-
-                        auto score = chai.eval<double>(scoreRule);
-
-                        if (node.weight().present()) {
-                            score *= node.weight().get();
-                        }
-
-                        return score;
-                    }
-
-                    // Recursively search in children if present
-                    if (node.children().present()) {
-                        for (const auto& child : node.children()->node()) {
-                            double result = searchNode(child);
-                            if (result != 0.0 || child.profile_id() == code) {
-                                return result;
-                            }
-                        }
-                    }
-
-                    return 0.0;
-                };
-
-            for (const auto& item : kpmrRiskProfile->node()) {
-                double result = searchNode(item);
-                if (result != 0.0 || item.profile_id() == code) {
-                    return result;
-                }
+            ensureIndexes();
+            auto it = kpmrProfileByCode.find(code);
+            if (it == kpmrProfileByCode.end()) {
+                return 0.0;
             }
 
+            auto& node = *it->second;
+            if (node.computed_weighted_score().present()) {
+                return std::strtod(node.computed_weighted_score().get().c_str(), nullptr);
+            }
+            if (node.computed_score().present()) {
+                return std::strtod(node.computed_score().get().c_str(), nullptr) * weightByCodeKPMR(code);
+            }
             return 0.0;
         };
 
         int computedRatingByCode(const std::string& code) {
-            // Helper function to recursively search through nodes
-            std::function<int(const RiskProfileNodeType&)> searchNode = 
-                [&](const RiskProfileNodeType& node) -> int {
-                    if (node.Profile_ID() == code) {
-                        if (node.computed_rating().present()) {
-                            return std::stoi(node.computed_rating().get());
-                        }
-                        return 0;
-                    }
-                    
-                    // Recursively search in children
-                    for (const auto& child : node.RiskProfileNode()) {
-                        int result = searchNode(child);
-                        if (result != 0 || child.Profile_ID() == code) {
-                            return result;
-                        }
-                    }
-                    
-                    return 0;
-                };
-            
-            for (const auto& item : inherentRiskProfile->RiskProfileNode()) {
-                int result = searchNode(item);
-                if (result != 0 || item.Profile_ID() == code) {
-                    return result;
-                }
+            ensureIndexes();
+            auto it = inherentProfileByCode.find(code);
+            if (it != inherentProfileByCode.end() && it->second->computed_rating().present()) {
+                return std::stoi(it->second->computed_rating().get());
             }
-            
             return 0;
         };
 
         double findConsolidateKPMRByCode(const std::string& code) {
-            // Check if datasources is valid
-            if (!datasources) {
-                return 0.0;
+            ensureIndexes();
+            auto cacheIt = kpmrConsolidateCache.find(code);
+            if (cacheIt != kpmrConsolidateCache.end()) {
+                return cacheIt->second;
             }
-            
-            // Helper function to recursively search through RiskItemType children
-            std::function<double(const kpmr::datasource::RiskItemType&)> searchInItem = 
-                [&](const kpmr::datasource::RiskItemType& item) -> double {
-                    // Check if current item matches the code
-                    if (item.code() == code) {
-                        if (item.consolidate().present()) {
-                            return static_cast<double>(item.consolidate().get());
-                        }
-                        return 0.0;
-                    }
-                    
-                    // Recursively search in children if present
-                    if (item.children().present()) {
-                        for (const auto& child : item.children()->item()) {
-                            double result = searchInItem(child);
-                            if (result != 0.0 || child.code() == code) {
-                                return result;
-                            }
-                        }
-                    }
-                    
-                    return 0.0;
-                };
-            
-            // Iterate through the top-level list
-            for (const auto& riskGroup : datasources->list()) {
-                // Check if the risk group itself matches
-                if (riskGroup.code() == code) {
-                    return static_cast<double>(riskGroup.value());
-                }
-                
-                // Search in children if present
-                if (riskGroup.children().present()) {
-                    for (const auto& item : riskGroup.children()->item()) {
-                        double result = searchInItem(item);
-                        if (result != 0.0 || item.code() == code) {
-                            return result;
-                        }
-                    }
-                }
+
+            auto itemIt = kpmrItemByCode.find(code);
+            if (itemIt != kpmrItemByCode.end()) {
+                double value = itemIt->second->consolidate().present()
+                    ? static_cast<double>(itemIt->second->consolidate().get())
+                    : 0.0;
+                kpmrConsolidateCache[code] = value;
+                return value;
             }
-            
+
+            auto groupIt = kpmrGroupByCode.find(code);
+            if (groupIt != kpmrGroupByCode.end()) {
+                double value = static_cast<double>(groupIt->second->value());
+                kpmrConsolidateCache[code] = value;
+                return value;
+            }
+
             return 0.0;
         };
         
         std::string thresholdByCode(const std::string& code) {
-            // Helper function to recursively search through nodes
-            std::function<std::string(const RiskProfileNodeType&)> searchNode = 
-                [&](const RiskProfileNodeType& node) -> std::string {
-                    if (node.Profile_ID() == code) {
-                        if (node.threshold().present()) {
-                            return node.threshold().get();
-                        }
-                        return "";
-                    }
-                    
-                    // Recursively search in children
-                    for (const auto& child : node.RiskProfileNode()) {
-                        std::string result = searchNode(child);
-                        if (!result.empty() || child.Profile_ID() == code) {
-                            return result;
-                        }
-                    }
-                    
-                    return "";
-                };
-            
-            for (const auto& item : inherentRiskProfile->RiskProfileNode()) {
-                std::string result = searchNode(item);
-                if (!result.empty() || item.Profile_ID() == code) {
-                    return result;
-                }
+            ensureIndexes();
+            auto it = inherentProfileByCode.find(code);
+            if (it != inherentProfileByCode.end() && it->second->threshold().present()) {
+                return it->second->threshold().get();
             }
-            
             return "";
         };
         
         std::string thresholdByCodeKPMR(const std::string& code) {
-            // Helper function to recursively search through KPMR nodes
-            std::function<std::string(const kpmr::riskprofile::NodeType&)> searchNode = 
-                [&](const kpmr::riskprofile::NodeType& node) -> std::string {
-                    if (node.profile_id() == code) {
-                        return node.threshold();;
-                    }
-                    
-                    // Recursively search in children if present
-                    if (node.children().present()) {
-                        for (const auto& child : node.children()->node()) {
-                            std::string result = searchNode(child);
-                            if (!result.empty() || child.profile_id() == code) {
-                                return result;
-                            }
-                        }
-                    }
-                    
-                    return "";
-                };
-            
-            for (const auto& item : kpmrRiskProfile->node()) {
-                std::string result = searchNode(item);
-                if (!result.empty() || item.profile_id() == code) {
-                    return result;
-                }
+            ensureIndexes();
+            auto it = kpmrProfileByCode.find(code);
+            if (it != kpmrProfileByCode.end()) {
+                return it->second->threshold();
             }
-            
             return "";
         };
         
         std::string scoreFormulaByCode(const std::string& code) {
-            // Helper function to recursively search through nodes
-            std::function<std::string(const RiskProfileNodeType&)> searchNode = 
-                [&](const RiskProfileNodeType& node) -> std::string {
-                    if (node.Profile_ID() == code) {
-                        if (node.rating_to_score().present()) {
-                            return node.rating_to_score().get();
-                        }
-                        return "";
-                    }
-                    
-                    // Recursively search in children
-                    for (const auto& child : node.RiskProfileNode()) {
-                        std::string result = searchNode(child);
-                        if (!result.empty() || child.Profile_ID() == code) {
-                            return result;
-                        }
-                    }
-                    
-                    return "";
-                };
-            
-            for (const auto& item : inherentRiskProfile->RiskProfileNode()) {
-                std::string result = searchNode(item);
-                if (!result.empty() || item.Profile_ID() == code) {
-                    return result;
-                }
+            ensureIndexes();
+            auto it = inherentProfileByCode.find(code);
+            if (it != inherentProfileByCode.end() && it->second->rating_to_score().present()) {
+                return it->second->rating_to_score().get();
             }
-            
             return "";
         };
         
         std::string scoreFormulaByCodeKPMR(const std::string& code) {
-            // Helper function to recursively search through KPMR nodes
-            std::function<std::string(const kpmr::riskprofile::NodeType&)> searchNode = 
-                [&](const kpmr::riskprofile::NodeType& node) -> std::string {
-                    if (node.profile_id() == code) {
-                       
-                        return node.score_formula().get();
-                    }
-                    
-                    // Recursively search in children if present
-                    if (node.children().present()) {
-                        for (const auto& child : node.children()->node()) {
-                            std::string result = searchNode(child);
-                            if (!result.empty() || child.profile_id() == code) {
-                                return result;
-                            }
-                        }
-                    }
-                    
-                    return "";
-                };
-            
-            for (const auto& item : kpmrRiskProfile->node()) {
-                std::string result = searchNode(item);
-                if (!result.empty() || item.profile_id() == code) {
-                    return result;
-                }
+            ensureIndexes();
+            auto it = kpmrProfileByCode.find(code);
+            if (it != kpmrProfileByCode.end() && it->second->score_formula().present()) {
+                return it->second->score_formula().get();
             }
-            
             return "";
         };
         
@@ -549,94 +336,24 @@ namespace riskprofile {
         };
 
         int ratingByThreshold(const std::string& threshold, const std::unordered_map<std::string, double>& variables) {
-            std::cout << "Evaluating rating using threshold: " << threshold << std::endl;
-            // Split threshold by \n
-            std::istringstream stream(threshold);
-            std::string line;
-            
-            while (std::getline(stream, line)) {
-                // Trim leading and trailing whitespace
-                line.erase(0, line.find_first_not_of(" \t\r\n"));
-                line.erase(line.find_last_not_of(" \t\r\n") + 1);
-                
-                if (line.empty()) continue;
-                
-                try {
-                    // Remove extra spaces around colon
-                    size_t colonPos = line.find(':');
-                    if (colonPos == std::string::npos) continue;
-                    
-                    std::string ratingStr = line.substr(0, colonPos);
-                    std::string exprStr = line.substr(colonPos + 1);
-                    
-                    // Trim the expression
-                    exprStr.erase(0, exprStr.find_first_not_of(" \t"));
-                    exprStr.erase(exprStr.find_last_not_of(" \t") + 1);
-                    
-                    std::cout << "  Parsing rating: '" << ratingStr << "' with expr: '" << exprStr << "'" << std::endl;
-                    
-                    // Parse with ANTLR
-                    antlr4::ANTLRInputStream inputStream(exprStr);
-                    ThresholdLexer lexer(&inputStream);
-                    antlr4::CommonTokenStream tokens(&lexer);
-                    ThresholdParser parser(&tokens);
-                    
-                    // Parse as expression directly
-                    ThresholdParser::ExprContext* tree = parser.expr();
-                    
-                    // Extract expression from parse tree
-                    EvalVisitor visitor;
-                    std::string compiledExpr = std::any_cast<std::string>(visitor.visitExpr(tree));
-                    
-                    std::cout << "  Compiled expression: '" << compiledExpr << "'" << std::endl;
-                    
-                    // Evaluate the expression with the given variables
-                    if (evalExprWithVariables(variables, compiledExpr)) {
-                        // Return the rating if the expression matches
-                        int rating = std::stoi(ratingStr);
-                        std::cout << "  Rating matched: " << rating << std::endl;
-                        return rating;
-                    }
-                } catch (const std::exception& e) {
-                    std::cerr << "Error parsing threshold line: '" << line << "' - " << e.what() << std::endl;
-                    continue;
+            ThresholdProgram& program = thresholdProgramFor(threshold, variables);
+            for (const auto& rule : program.rules) {
+                if (rule->evaluate(variables)) {
+                    DLOG(INFO) << "Threshold rating matched: " << rule->rating;
+                    return rule->rating;
                 }
             }
-            
-            // No matching rule found
+
             return -1;
         };
 
         double ratingToScore(const std::string& ratingToScoreStr, int rating) {
-            std::cout << "Mapping rating to score using string: " << ratingToScoreStr << " for rating: " << rating << std::endl;
-            
-            // Parse the rating to score mapping (format: "1:92\n2:76\n3:60\n4:44\n5:28")
-            std::istringstream stream(ratingToScoreStr);
-            std::string line;
-            
-            while (std::getline(stream, line)) {
-                if (line.empty()) continue;
-                
-                // Split by ':'
-                size_t colonPos = line.find(':');
-                if (colonPos == std::string::npos) continue;
-                
-                try {
-                    int lineRating = std::stoi(line.substr(0, colonPos));
-                    double score = std::stod(line.substr(colonPos + 1));
-                    
-                    if (lineRating == rating) {
-                        std::cout << "Found matching rating " << rating << " -> score " << score << std::endl;
-                        return score;
-                    }
-                } catch (const std::exception& e) {
-                    std::cerr << "Error parsing rating-to-score line: " << line << " - " << e.what() << std::endl;
-                    continue;
-                }
+            const auto& scoreMap = ratingToScoreMap(ratingToScoreStr);
+            auto it = scoreMap.find(rating);
+            if (it != scoreMap.end()) {
+                return it->second;
             }
-            
-            // No matching rating found
-            std::cout << "No matching rating found for: " << rating << std::endl;
+            DLOG(INFO) << "No matching score found for rating: " << rating;
             return 0.0;
         };
         
@@ -644,6 +361,219 @@ namespace riskprofile {
         void processInherentRiskNode(RiskProfileNodeType& node, int depth = 0);
         void processKPMRRiskNode(kpmr::riskprofile::NodeType& node, int depth = 0);
     };
+
+    inline std::string Evaluator::trim(std::string value)
+    {
+        auto notSpace = [](unsigned char c) { return !std::isspace(c); };
+        value.erase(value.begin(), std::find_if(value.begin(), value.end(), notSpace));
+        value.erase(std::find_if(value.rbegin(), value.rend(), notSpace).base(), value.end());
+        return value;
+    }
+
+    inline std::string Evaluator::thresholdProgramCacheKey(
+        const std::string& threshold,
+        const std::unordered_map<std::string, double>& variables)
+    {
+        std::vector<std::string> names;
+        names.reserve(variables.size());
+        for (const auto& variable : variables) {
+            names.push_back(variable.first);
+        }
+        std::sort(names.begin(), names.end());
+
+        std::ostringstream key;
+        key << threshold << '\0';
+        for (const auto& name : names) {
+            key << name << '\0';
+        }
+        return key.str();
+    }
+
+    inline void Evaluator::resetEvaluationCaches()
+    {
+        inherentProfileByCode.clear();
+        kpmrProfileByCode.clear();
+        inherentDataSourceByCode.clear();
+        kpmrGroupByCode.clear();
+        kpmrItemByCode.clear();
+        inherentConsolidateCache.clear();
+        kpmrConsolidateCache.clear();
+        thresholdProgramCache.clear();
+        ratingToScoreCache.clear();
+        indexesBuilt = false;
+    }
+
+    inline void Evaluator::ensureIndexes()
+    {
+        if (indexesBuilt) {
+            return;
+        }
+
+        inherentProfileByCode.clear();
+        kpmrProfileByCode.clear();
+        inherentDataSourceByCode.clear();
+        kpmrGroupByCode.clear();
+        kpmrItemByCode.clear();
+
+        if (inherentRiskProfile) {
+            for (auto& node : inherentRiskProfile->RiskProfileNode()) {
+                indexInherentNode(node);
+            }
+        }
+
+        if (kpmrRiskProfile) {
+            for (auto& node : kpmrRiskProfile->node()) {
+                indexKPMRNode(node);
+            }
+        }
+
+        if (inherentDataSources) {
+            for (auto& item : inherentDataSources->list().item()) {
+                inherentDataSourceByCode[item.code()] = &item;
+            }
+        }
+
+        if (datasources) {
+            for (auto& group : datasources->list()) {
+                kpmrGroupByCode[group.code()] = &group;
+                if (group.children().present()) {
+                    for (auto& item : group.children()->item()) {
+                        indexKPMRItem(item);
+                    }
+                }
+            }
+        }
+
+        indexesBuilt = true;
+    }
+
+    inline void Evaluator::indexInherentNode(RiskProfileNodeType& node)
+    {
+        inherentProfileByCode[node.Profile_ID()] = &node;
+        for (auto& child : node.RiskProfileNode()) {
+            indexInherentNode(child);
+        }
+    }
+
+    inline void Evaluator::indexKPMRNode(kpmr::riskprofile::NodeType& node)
+    {
+        kpmrProfileByCode[node.profile_id()] = &node;
+        if (node.children().present()) {
+            for (auto& child : node.children()->node()) {
+                indexKPMRNode(child);
+            }
+        }
+    }
+
+    inline void Evaluator::indexKPMRItem(kpmr::datasource::RiskItemType& item)
+    {
+        kpmrItemByCode[item.code()] = &item;
+        if (item.children().present()) {
+            for (auto& child : item.children()->item()) {
+                indexKPMRItem(child);
+            }
+        }
+    }
+
+    inline Evaluator::ThresholdProgram& Evaluator::thresholdProgramFor(
+        const std::string& threshold,
+        const std::unordered_map<std::string, double>& variables)
+    {
+        const std::string key = thresholdProgramCacheKey(threshold, variables);
+        auto cached = thresholdProgramCache.find(key);
+        if (cached != thresholdProgramCache.end()) {
+            return *cached->second;
+        }
+
+        std::vector<std::string> variableNames;
+        variableNames.reserve(variables.size());
+        for (const auto& variable : variables) {
+            variableNames.push_back(variable.first);
+        }
+        std::sort(variableNames.begin(), variableNames.end());
+
+        auto program = std::make_unique<ThresholdProgram>();
+        std::istringstream stream(threshold);
+        std::string line;
+
+        while (std::getline(stream, line)) {
+            line = trim(line);
+            if (line.empty()) {
+                continue;
+            }
+
+            size_t colonPos = line.find(':');
+            if (colonPos == std::string::npos) {
+                continue;
+            }
+
+            try {
+                const int rating = std::stoi(trim(line.substr(0, colonPos)));
+                const std::string exprStr = trim(line.substr(colonPos + 1));
+                if (exprStr.empty()) {
+                    continue;
+                }
+
+                antlr4::ANTLRInputStream inputStream(exprStr);
+                ThresholdLexer lexer(&inputStream);
+                antlr4::CommonTokenStream tokens(&lexer);
+                ThresholdParser parser(&tokens);
+                ThresholdParser::ExprContext* tree = parser.expr();
+
+                EvalVisitor visitor;
+                std::string compiledExpr = std::any_cast<std::string>(visitor.visitExpr(tree));
+                auto rule = std::make_unique<ThresholdCompiledRule>(rating, compiledExpr, variableNames);
+                if (rule->compiled) {
+                    program->rules.push_back(std::move(rule));
+                }
+            } catch (const std::exception& e) {
+                DLOG(INFO) << "Error parsing threshold line: '" << line << "' - " << e.what();
+                continue;
+            }
+        }
+
+        auto inserted = thresholdProgramCache.emplace(key, std::move(program));
+        return *inserted.first->second;
+    }
+
+    inline const std::unordered_map<int, double>& Evaluator::ratingToScoreMap(
+        const std::string& ratingToScoreStr)
+    {
+        auto cached = ratingToScoreCache.find(ratingToScoreStr);
+        if (cached != ratingToScoreCache.end()) {
+            return cached->second;
+        }
+
+        std::string normalized = ratingToScoreStr;
+        std::replace(normalized.begin(), normalized.end(), ',', '\n');
+
+        std::unordered_map<int, double> scoreMap;
+        std::istringstream stream(normalized);
+        std::string line;
+        while (std::getline(stream, line)) {
+            line = trim(line);
+            if (line.empty()) {
+                continue;
+            }
+
+            size_t colonPos = line.find(':');
+            if (colonPos == std::string::npos) {
+                continue;
+            }
+
+            try {
+                int lineRating = std::stoi(trim(line.substr(0, colonPos)));
+                double score = std::stod(trim(line.substr(colonPos + 1)));
+                scoreMap[lineRating] = score;
+            } catch (const std::exception& e) {
+                DLOG(INFO) << "Error parsing rating-to-score line: " << line << " - " << e.what();
+                continue;
+            }
+        }
+
+        auto inserted = ratingToScoreCache.emplace(ratingToScoreStr, std::move(scoreMap));
+        return inserted.first->second;
+    }
 
     inline void Evaluator::setupChaiScriptEvaluator(chaiscript::ChaiScript& chai)
     {
@@ -773,11 +703,9 @@ namespace riskprofile {
 
     inline OperationStatus Evaluator::evaluate()
     {
-        // Dummy implementation
-        std::cout << "Evaluating risk profile..." << std::endl;
-
-            evaluateInherentRiskProfile();
-           // evaluateKPMRRiskProfile();
+        DLOG(INFO) << "Evaluating risk profile...";
+        evaluateInherentRiskProfile();
+        // evaluateKPMRRiskProfile();
         return SuccessOperationStatus;
     }
     
@@ -789,27 +717,29 @@ namespace riskprofile {
         }
         
         std::string indent(depth * 2, ' ');
-        std::cout << indent << "Processing Inherent Risk Profile Node: " << node.Profile_ID() << std::endl;
+        DLOG(INFO) << indent << "Processing Inherent Risk Profile Node: " << node.Profile_ID();
         
         // Only print risiko_name if it's present (it's optional)
         if (node.assessment_factor().present()) {
-            std::cout << indent << "  Assessment Name: " << node.assessment_factor().get() << std::endl;
+            DLOG(INFO) << indent << "  Assessment Name: " << node.assessment_factor().get();
         }
+
+        chaiscript::ChaiScript chai;
+        setupChaiScriptEvaluator(chai);
+
+        if (node.threshold().present()) {
+            chai.add(chaiscript::var(std::string(node.threshold().get())), "threshold");
+        }
+        if (node.score_formula().present()) {
+            chai.add(chaiscript::var(std::string(node.score_formula().get())), "rating_to_score");
+        }
+
+        bool valueBound = false;
+        bool ratingBound = false;
 
         // calculate the rules first
         if (node.value_rule().present() && !node.value_rule().get().empty()) {
-            std::cout << indent << "  Value Rule: " << node.value_rule().get() << std::endl;
-
-            // Create fresh ChaiScript instance for this rule
-            chaiscript::ChaiScript chai;
-            setupChaiScriptEvaluator(chai);
-            
-            if (node.threshold().present()) {
-                chai.add(chaiscript::var(std::string(node.threshold().get())), "threshold");
-            }
-            if (node.score_formula().present()) {
-                chai.add(chaiscript::var(std::string(node.score_formula().get())), "rating_to_score");
-            }
+            DLOG(INFO) << indent << "  Value Rule: " << node.value_rule().get();
             
             auto result = 0.0;
 
@@ -821,26 +751,17 @@ namespace riskprofile {
                 result = 0.0; // Default to 0 on error
             }
 
-            std::cout << indent << "    Evaluated Value Rule Result: " << result << std::endl;
+            DLOG(INFO) << indent << "    Evaluated Value Rule Result: " << result;
             
             node.computed_value(formatDouble(result));
         }
 
         if (node.rating_rule().present() && !node.rating_rule().get().empty()) {
-            std::cout << indent << "  Rating Rule: " << node.rating_rule().get() << std::endl;
+            DLOG(INFO) << indent << "  Rating Rule: " << node.rating_rule().get();
 
-            // Create fresh ChaiScript instance for this rule
-            chaiscript::ChaiScript chai;
-            setupChaiScriptEvaluator(chai);
-            
-            if (node.threshold().present()) {
-                chai.add(chaiscript::var(std::string(node.threshold().get())), "threshold");
-            }
-            if (node.score_formula().present()) {
-                chai.add(chaiscript::var(std::string(node.score_formula().get())), "rating_to_score");
-            }
-            if (node.computed_value().present()) {
+            if (!valueBound && node.computed_value().present()) {
                 chai.add(chaiscript::var(std::strtod(node.computed_value().get().c_str(), nullptr)), "value");
+                valueBound = true;
             }
 
             auto result = -1;
@@ -851,29 +772,21 @@ namespace riskprofile {
                 result = -1; // Default to -1 on error
             }
 
-            std::cout << indent << "    Evaluated Rating Rule Result: " << result << std::endl;
+            DLOG(INFO) << indent << "    Evaluated Rating Rule Result: " << result;
 
             node.computed_rating(std::to_string(result));
         }
 
         if (node.score_rule().present() && !node.score_rule().get().empty()) {
-            std::cout << indent << "  Score Rule: " << node.score_rule().get() << std::endl;
+            DLOG(INFO) << indent << "  Score Rule: " << node.score_rule().get();
 
-            // Create fresh ChaiScript instance for this rule
-            chaiscript::ChaiScript chai;
-            setupChaiScriptEvaluator(chai);
-            
-            if (node.threshold().present()) {
-                chai.add(chaiscript::var(std::string(node.threshold().get())), "threshold");
-            }
-            if (node.score_formula().present()) {
-                chai.add(chaiscript::var(std::string(node.score_formula().get())), "rating_to_score");
-            }
-            if (node.computed_value().present()) {
+            if (!valueBound && node.computed_value().present()) {
                 chai.add(chaiscript::var(std::strtod(node.computed_value().get().c_str(), nullptr)), "value");
+                valueBound = true;
             }
-            if (node.computed_rating().present()) {
+            if (!ratingBound && node.computed_rating().present()) {
                 chai.add(chaiscript::var(std::stoi(node.computed_rating().get())), "rating");
+                ratingBound = true;
             }
 
             auto result = 0.0;
@@ -884,7 +797,7 @@ namespace riskprofile {
                 result = 0.0; // Default to 0 on error
             }
 
-            std::cout << indent << "    Evaluated Score Rule Result: " << result << std::endl;
+            DLOG(INFO) << indent << "    Evaluated Score Rule Result: " << result;
 
             node.computed_score(std::to_string(result));
 
@@ -895,7 +808,7 @@ namespace riskprofile {
             }
 
             double weightedScore = result * weight;
-            std::cout << indent << "    Weighted Score: " << weightedScore << std::endl;
+            DLOG(INFO) << indent << "    Weighted Score: " << weightedScore;
 
             node.computed_weighted_score(std::to_string(weightedScore));
         }
@@ -907,6 +820,9 @@ namespace riskprofile {
     
     inline OperationStatus Evaluator::evaluateInherentRiskProfile()
     {
+        resetEvaluationCaches();
+        ensureIndexes();
+
         for (auto &node : inherentRiskProfile->RiskProfileNode()) {
             processInherentRiskNode(node, 0);
         }
@@ -916,25 +832,25 @@ namespace riskprofile {
     inline void Evaluator::processKPMRRiskNode(kpmr::riskprofile::NodeType& node, int depth)
     {
         std::string indent(depth * 2, ' ');
-        std::cout << indent << "Processing KPMR Risk Profile Node: " << node.profile_id() << std::endl;
-        std::cout << indent << "  Risk Name: " << node.risiko_name() << std::endl;
-        std::cout << indent << "  Children present: " << (node.children().present() ? "YES" : "NO") << std::endl;
+        DLOG(INFO) << indent << "Processing KPMR Risk Profile Node: " << node.profile_id();
+        DLOG(INFO) << indent << "  Risk Name: " << node.risiko_name();
+        DLOG(INFO) << indent << "  Children present: " << (node.children().present() ? "YES" : "NO");
         
         // Recursively process children first
         if (node.children().present()) {
-            std::cout << indent << "  Entering children processing..." << std::endl;
-            std::cout << indent << "  Number of children: " << node.children()->node().size() << std::endl;
+            DLOG(INFO) << indent << "  Entering children processing...";
+            DLOG(INFO) << indent << "  Number of children: " << node.children()->node().size();
             
             for (auto& childNode : node.children()->node()) {
                 processKPMRRiskNode(childNode, depth + 1);
 
+                chaiscript::ChaiScript chai;
+                setupChaiScriptEvaluator(chai);
+                bool ratingBound = false;
+
                 if (childNode.rating_rule().present() && !childNode.rating_rule().get().empty()) {
                     std::string indentChild((depth + 1) * 2, ' ');
-                    std::cout << indentChild << "  Child Rating Rule: " << childNode.rating_rule().get() << std::endl;
-
-                    // Create fresh ChaiScript instance for this rule
-                    chaiscript::ChaiScript chai;
-                    setupChaiScriptEvaluator(chai);
+                    DLOG(INFO) << indentChild << "  Child Rating Rule: " << childNode.rating_rule().get();
 
                     auto computed_rating = -1;
                     try {
@@ -944,21 +860,18 @@ namespace riskprofile {
                         computed_rating = -1; // Default to -1 on error
                     }
 
-                    std::cout << indentChild << "Computed Child Rating: " << computed_rating << std::endl;
+                    DLOG(INFO) << indentChild << "Computed Child Rating: " << computed_rating;
 
                     childNode.computed_rating(std::to_string(computed_rating));
                 }
 
                 if (childNode.score_rule().present() && !childNode.score_rule().get().empty()) {
                     std::string indentChild((depth + 1) * 2, ' ');
-                    std::cout << indentChild << "  Child Score Rule: " << childNode.score_rule().get() << std::endl;
+                    DLOG(INFO) << indentChild << "  Child Score Rule: " << childNode.score_rule().get();
 
-                    // Create fresh ChaiScript instance for this rule
-                    chaiscript::ChaiScript chai;
-                    setupChaiScriptEvaluator(chai);
-                    
-                    if (childNode.computed_rating().present()) {
+                    if (!ratingBound && childNode.computed_rating().present()) {
                         chai.add(chaiscript::var(std::stoi(childNode.computed_rating().get())), "rating");
+                        ratingBound = true;
                     }
 
                     auto computed_score = 0.0;
@@ -969,7 +882,7 @@ namespace riskprofile {
                         computed_score = 0.0; // Default to 0 on error
                     }
 
-                    std::cout << indentChild << "Computed Child Score: " << computed_score << std::endl;
+                    DLOG(INFO) << indentChild << "Computed Child Score: " << computed_score;
 
                     childNode.computed_score(std::to_string(computed_score));
 
@@ -981,14 +894,14 @@ namespace riskprofile {
                     }
 
                     double weightedScore = computed_score * weight;
-                    std::cout << indentChild << "    Child Weighted Score: " << weightedScore << std::endl;
+                    DLOG(INFO) << indentChild << "    Child Weighted Score: " << weightedScore;
 
                     childNode.computed_weighted_score(std::to_string(weightedScore));
 
                 }
             }
         } else {
-            std::cout << indent << "  No children element found in this node" << std::endl;
+            DLOG(INFO) << indent << "  No children element found in this node";
         }
         
         // Add evaluation logic here
@@ -996,9 +909,12 @@ namespace riskprofile {
 
     inline OperationStatus Evaluator::evaluateKPMRRiskProfile()
     {
+        resetEvaluationCaches();
+        ensureIndexes();
+
         for (auto &node : kpmrRiskProfile->node()) {
-            std::cout << "traversing kpmr node" << std::endl;
-            std::cout << "node profile id: " << node.profile_id() << std::endl;
+            DLOG(INFO) << "traversing kpmr node";
+            DLOG(INFO) << "node profile id: " << node.profile_id();
 
             processKPMRRiskNode(node, 0);
         }
