@@ -485,8 +485,8 @@ public class ThresholdParser extends Parser {
 
 	@SuppressWarnings("CheckReturnValue")
 	public static class ValueContext extends ParserRuleContext {
-		public TerminalNode INT() { return getToken(ThresholdParser.INT, 0); }
 		public TerminalNode FLOAT() { return getToken(ThresholdParser.FLOAT, 0); }
+		public TerminalNode INT() { return getToken(ThresholdParser.INT, 0); }
 		public TerminalNode IDENT() { return getToken(ThresholdParser.IDENT, 0); }
 		public ValueContext(ParserRuleContext parent, int invokingState) {
 			super(parent, invokingState);

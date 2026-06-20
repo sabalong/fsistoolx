@@ -400,6 +400,27 @@ target_link_libraries(rating_threshold_cli
     pthread
 )
 
+add_executable(riskprofile_optimization_test src/riskprofile_optimization_test.cpp src/exprtkevaluator.cpp ${THRESHOLD_SOURCES})
+target_include_directories(riskprofile_optimization_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/gen/cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/gen/cpp/ThresholdGrammar/antlr4
+    ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty
+    ${XERCES_INCLUDE_DIR}
+    ${ANTLR4_INCLUDE_DIR}
+)
+target_link_libraries(riskprofile_optimization_test
+    ilfx_lib
+    kpmr_lib
+    ${XERCES_LIBRARIES}
+    ${ANTLR4_LIBRARIES}
+    absl::log
+    absl::log_initialize
+    absl::log_internal_message
+    pthread
+)
+
 set(ILFX_CLI_TARGETS
     ilfx_cli
     chaiscript_cli
@@ -444,6 +465,7 @@ target_link_libraries(inherent_datasource_test
 # Enable testing
 enable_testing()
 add_test(NAME InherentDataSourceTests COMMAND inherent_datasource_test)
+add_test(NAME RiskProfileOptimizationTests COMMAND riskprofile_optimization_test)
 
 # Optional: Add all test discovery
 gtest_discover_tests(inherent_datasource_test)
