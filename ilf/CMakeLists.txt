@@ -66,7 +66,10 @@ add_executable(build_tree_kpmr_cli
     src/xmlh.c
     src/glibh.c
 )
-target_include_directories(build_tree_kpmr_cli PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_include_directories(build_tree_kpmr_cli PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${TCC_INCLUDE_DIR}
+)
 target_link_libraries(build_tree_kpmr_cli PRIVATE PkgConfig::GLIB PkgConfig::XML2)
 set_target_properties(build_tree_kpmr_cli PROPERTIES LINKER_LANGUAGE CXX)
 fsistoolx_enable_otel(build_tree_kpmr_cli KEYWORD)
