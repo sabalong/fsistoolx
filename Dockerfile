@@ -108,13 +108,13 @@ RUN wget https://dlcdn.apache.org//xerces/c/3/sources/xerces-c-3.3.0.tar.gz && \
 
     
 # Set environment variables for building with dependencies
-ENV PKG_CONFIG_PATH=/opt/glib/lib64/pkgconfig:/opt/libxml2/lib/pkgconfig:/opt/libxslt/lib/pkgconfig:/opt/gsl/lib/pkgconfig:${PKG_CONFIG_PATH:-}
-ENV LD_LIBRARY_PATH=/opt/glib/lib64:/opt/libxml2/lib:/opt/libxslt/lib:/opt/gsl/lib:/usr/local/lib:${LD_LIBRARY_PATH:-}
+ENV PKG_CONFIG_PATH=/opt/glib/lib64/pkgconfig:/opt/libxml2/lib/pkgconfig:/opt/libxslt/lib/pkgconfig:/opt/gsl/lib/pkgconfig
+ENV LD_LIBRARY_PATH=/opt/glib/lib64:/opt/libxml2/lib:/opt/libxslt/lib:/opt/gsl/lib:/usr/local/lib
 ENV CFLAGS="-I/opt/glib/include/glib-2.0 -I/opt/glib/lib64/glib-2.0/include -I/opt/libxml2/include/libxml2 -I/opt/libxslt/include -I/opt/gsl/include"
 ENV LDFLAGS="-L/opt/glib/lib64 -L/opt/libxml2/lib -L/opt/libxslt/lib -L/opt/gsl/lib"
 
 ENV XERCES_HOME=/usr/local
-ENV CMAKE_PREFIX_PATH=/opt/opentelemetry:/usr/local:${CMAKE_PREFIX_PATH:-}
+ENV CMAKE_PREFIX_PATH=/opt/opentelemetry:/usr/local
 
 COPY ./tools/XQilla-2.3.4 /XQilla-2.3.4
 RUN cd /XQilla-2.3.4 && \
@@ -147,6 +147,9 @@ RUN cmake -S /tools/opentelemetry-cpp-1.27.0 \
     cmake --install /tools/opentelemetry-cpp-1.27.0/build-static
 
 COPY ./telemetry /telemetry
+# The shared telemetry target includes ilfx/src/otel_cli.hpp. Copy ilfx before
+# building the first telemetry consumer (ilfreporter), not only before ilfx.
+COPY ./ilfx /ilfx
 COPY ./ilfreporter-0.0.1 /ilfreporter-0.0.1
 RUN cd /ilfreporter-0.0.1 && \
     rm -rf build && \
@@ -176,8 +179,6 @@ RUN go build -buildmode=c-archive -mod=vendor -o /gofunct/gen/libgofunct.a /gofu
 RUN cp /gofunct/gen/libgofunct.a /usr/local/lib/libgofunct.a
 
 # Build ilfx project
-COPY ./ilfx /ilfx
-
 RUN cd /ilfx && \
     rm -rf build && \
     mkdir -p build && \
