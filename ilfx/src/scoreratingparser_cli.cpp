@@ -21,7 +21,7 @@ int main(int argc, char* argv[]) {
     std::string file = absl::GetFlag(FLAGS_file);
     std::string lookup = absl::GetFlag(FLAGS_lookup);
     auto otel = ilfx::otel::runtimeFromFlags("scoreratingparser_cli");
-    ilfx::otel::RootSpan root(otel, "scoreratingparser_cli.run");
+    ilfx::otel::RootSpan root(otel, "scoreratingparser_cli");
     root.setAttribute("input.present", !input.empty());
     root.setAttribute("file", file);
     root.setAttribute("lookup", lookup);

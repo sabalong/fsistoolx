@@ -6,6 +6,7 @@
 #include "absl/flags/usage.h"
 #include "absl/status/status.h"
 #include "riskprofile.hpp"
+#include "otel_cli.hpp"
 #include "InherentRiskProfile.hxx"
 #include <xercesc/util/PlatformUtils.hpp>
 #include <xqilla/xqilla-dom3.hpp>
@@ -24,14 +25,18 @@ int main(int argc, char** argv)
     const std::string conf_path = absl::GetFlag(FLAGS_input_conf);
     const std::string output_path = absl::GetFlag(FLAGS_output);
 
+    auto otel = ilfx::otel::runtimeFromEnvironment("ilfreporter");
+    ilfx::otel::RootSpan root(otel, "ilfreporter");
+
     if (profile_path.empty() || conf_path.empty())
     {
         std::cerr << "Both --input_profile and --input_conf are required." << std::endl;
-        return 1;
+        return root.finish(1);
     }
 
     try
     {
+        ilfx::otel::ScopedSpan execute_span(otel, "ilfreporter.generate");
         xercesc::XMLPlatformUtils::Initialize();
         XQillaPlatformUtils::initialize();
 
@@ -46,22 +51,25 @@ int main(int argc, char** argv)
         absl::Status st = generator.generateReport();
         if (!st.ok()) {
             std::cerr << "Report generation failed: " << st.message() << std::endl;
-            return 1;
+            execute_span.markError(std::string(st.message()));
+            return root.finish(1);
         }
 
         if (!output_path.empty()) {
             st = generator.writeInherentRiskProfileConf(output_path);
             if (!st.ok()) {
                 std::cerr << "Failed to write output config: " << st.message() << std::endl;
-                return 1;
+                execute_span.markError(std::string(st.message()));
+                return root.finish(1);
             }
         }
     }
     catch (const std::exception& ex)
     {
         std::cerr << "Failed to query profile: " << ex.what() << std::endl;
-        return 1;
+        root.markError(ex.what());
+        return root.finish(1);
     }
 
-    return 0;
+    return root.finish(0);
 }

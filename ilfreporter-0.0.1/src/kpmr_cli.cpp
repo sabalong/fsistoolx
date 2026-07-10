@@ -11,6 +11,7 @@
 
 #include "KPMRRiskProfile.hxx"
 #include "riskprofile.hpp"
+#include "otel_cli.hpp"
 
 ABSL_FLAG(std::string, input_profile, "", "Path to KPMR risk profile XML file");
 ABSL_FLAG(std::string, input_conf, "", "Path to aggregation config XML file");
@@ -25,14 +26,18 @@ int main(int argc, char** argv)
     const std::string conf_path = absl::GetFlag(FLAGS_input_conf);
     const std::string output_report = absl::GetFlag(FLAGS_output_report);
 
+    auto otel = ilfx::otel::runtimeFromEnvironment("ilfreporterkpmr");
+    ilfx::otel::RootSpan root(otel, "ilfreporterkpmr");
+
     if (profile_path.empty() && conf_path.empty())
     {
         std::cerr << "--input_profile and --input_conf are required." << std::endl;
-        return 1;
+        return root.finish(1);
     }
 
     try
     {
+        ilfx::otel::ScopedSpan initialize_span(otel, "ilfreporterkpmr.initialize");
         xercesc::XMLPlatformUtils::Initialize();
         XQillaPlatformUtils::initialize();
     }
@@ -41,12 +46,14 @@ int main(int argc, char** argv)
         char* msg = xercesc::XMLString::transcode(e.getMessage());
         std::cerr << "Failed to initialize XML platform: " << (msg ? msg : "<null>") << std::endl;
         xercesc::XMLString::release(&msg);
-        return 1;
+        root.markError("XML platform initialization failed");
+        return root.finish(1);
     }
 
     int status = 0;
     try
     {
+        ilfx::otel::ScopedSpan generate_span(otel, "ilfreporterkpmr.generate");
         auto tree_unique = kpmr::riskprofile::kpmr_risk_profile_tree_(profile_path, xml_schema::flags::keep_dom);
         std::shared_ptr<kpmr::riskprofile::kpmr_risk_profile_tree> tree(tree_unique.release());
 
@@ -59,6 +66,7 @@ int main(int argc, char** argv)
         if (!report_status.ok())
         {
                 std::cerr << "Error generating KPMR report: " << report_status.message() << std::endl;
+                generate_span.markError(std::string(report_status.message()));
                 status = 1;
          }else{
                 std::cout << "KPMR report generated successfully." << std::endl;
@@ -68,6 +76,7 @@ int main(int argc, char** argv)
        auto write_status = gen.writeKPMRRiskProfileConf(output_report);
        if (!write_status.ok()){
             std::cerr << "Error writing KPMR report: " << write_status.message() << std::endl;
+            generate_span.markError(std::string(write_status.message()));
             status = 1;
         } else {
             std::cout << "KPMR report written successfully to: " << output_report << std::endl;
@@ -77,6 +86,7 @@ int main(int argc, char** argv)
     catch (const std::exception& e)
     {
         std::cerr << "Error: " << e.what() << std::endl;
+        root.markError(e.what());
         status = 1;
     }
 
@@ -92,5 +102,5 @@ int main(int argc, char** argv)
         xercesc::XMLString::release(&msg);
     }
 
-    return status;
+    return root.finish(status);
 }

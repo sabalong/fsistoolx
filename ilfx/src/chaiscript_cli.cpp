@@ -94,7 +94,7 @@ int main(int argc, char* argv[]) {
     std::string script_path = absl::GetFlag(FLAGS_script);
     bool interactive = absl::GetFlag(FLAGS_interactive);
     auto otel = ilfx::otel::runtimeFromFlags("chaiscript_cli");
-    ilfx::otel::RootSpan root(otel, "chaiscript_cli.run");
+    ilfx::otel::RootSpan root(otel, "chaiscript_cli");
     root.setAttribute("script_path", script_path);
     root.setAttribute("interactive", interactive);
     

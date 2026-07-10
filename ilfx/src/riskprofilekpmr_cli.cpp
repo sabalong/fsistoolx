@@ -35,7 +35,7 @@ int main(int argc, char* argv[]) {
     std::string kpmr_riskprofile = absl::GetFlag(FLAGS_kpmr_riskprofile);
     std::string output_path = absl::GetFlag(FLAGS_output_path);
     auto otel = ilfx::otel::runtimeFromFlags("riskprofilekpmr_cli");
-    ilfx::otel::RootSpan root(otel, "riskprofilekpmr_cli.run");
+    ilfx::otel::RootSpan root(otel, "riskprofilekpmr_cli");
     root.setAttribute("kpmr_datasource", kpmr_datasource);
     root.setAttribute("kpmr_riskprofile", kpmr_riskprofile);
     root.setAttribute("output_path", output_path);

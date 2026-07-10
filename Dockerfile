@@ -114,7 +114,7 @@ ENV CFLAGS="-I/opt/glib/include/glib-2.0 -I/opt/glib/lib64/glib-2.0/include -I/o
 ENV LDFLAGS="-L/opt/glib/lib64 -L/opt/libxml2/lib -L/opt/libxslt/lib -L/opt/gsl/lib"
 
 ENV XERCES_HOME=/usr/local
-ENV CMAKE_PREFIX_PATH=/usr/local:${CMAKE_PREFIX_PATH:-}
+ENV CMAKE_PREFIX_PATH=/opt/opentelemetry:/usr/local:${CMAKE_PREFIX_PATH:-}
 
 COPY ./tools/XQilla-2.3.4 /XQilla-2.3.4
 RUN cd /XQilla-2.3.4 && \
@@ -126,22 +126,43 @@ RUN cd /XQilla-2.3.4 && \
     make -j$(nproc) && \
     make install
 
+# Build and install the OpenTelemetry C++ SDK as static archives. The CLI
+# binaries must not require libopentelemetry*.so in the runtime image.
+COPY ./tools/opentelemetry-cpp-1.27.0 /tools/opentelemetry-cpp-1.27.0
+RUN cmake -S /tools/opentelemetry-cpp-1.27.0 \
+      -B /tools/opentelemetry-cpp-1.27.0/build-static \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_INSTALL_PREFIX=/opt/opentelemetry \
+      -DBUILD_SHARED_LIBS=OFF \
+      -DBUILD_TESTING=OFF \
+      -DOPENTELEMETRY_INSTALL=ON \
+      -DWITH_OTLP_HTTP=ON \
+      -DWITH_OTLP_GRPC=OFF \
+      -DWITH_OTLP_FILE=OFF \
+      -DWITH_EXAMPLES=OFF \
+      -DWITH_EXAMPLES_HTTP=OFF \
+      -DWITH_FUNC_TESTS=OFF \
+      -DWITH_BENCHMARK=OFF && \
+    cmake --build /tools/opentelemetry-cpp-1.27.0/build-static -j$(nproc) && \
+    cmake --install /tools/opentelemetry-cpp-1.27.0/build-static
+
+COPY ./telemetry /telemetry
 COPY ./ilfreporter-0.0.1 /ilfreporter-0.0.1
 RUN cd /ilfreporter-0.0.1 && \
     rm -rf build && \
     mkdir -p build && cd build && \
-    cmake -DCMAKE_PREFIX_PATH=/usr/local .. && \
+    cmake -DCMAKE_PREFIX_PATH="/opt/opentelemetry;/usr/local" .. && \
     make -j
   
 COPY ./ilf /ilf
 
 RUN cd /ilf && \
-    make clean && \
-    make kpmr_source_tree_cli && \
-    make build_tree_kpmr_cli && \
-    make eval_cli && \
-    make eval_server && \
-    make build_tree_cli
+    rm -rf build-otel && \
+    cmake -S . -B build-otel \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_PREFIX_PATH="/opt/opentelemetry;/usr/local;/opt/gsl" && \
+    cmake --build build-otel -j$(nproc) && \
+    cmake -E copy_directory build-otel/bin /ilf
 
 # Copy libgofunct before building ilfx (required for linking)
 
@@ -155,7 +176,6 @@ RUN go build -buildmode=c-archive -mod=vendor -o /gofunct/gen/libgofunct.a /gofu
 RUN cp /gofunct/gen/libgofunct.a /usr/local/lib/libgofunct.a
 
 # Build ilfx project
-COPY ./tools/opentelemetry-cpp-1.27.0 /tools/opentelemetry-cpp-1.27.0
 COPY ./ilfx /ilfx
 
 RUN cd /ilfx && \
@@ -163,8 +183,8 @@ RUN cd /ilfx && \
     mkdir -p build && \
     cd build && \
     cmake \
-      -DILFX_ENABLE_OTEL=OFF \
-      -DCMAKE_PREFIX_PATH="/usr/local;/opt/gsl" \
+      -DILFX_ENABLE_OTEL=ON \
+      -DCMAKE_PREFIX_PATH="/opt/opentelemetry;/usr/local;/opt/gsl" \
       -DCMAKE_C_FLAGS="-I/opt/gsl/include" \
       -DCMAKE_CXX_FLAGS="-I/opt/gsl/include" \
       -DCMAKE_EXE_LINKER_FLAGS="-L/opt/gsl/lib" \
@@ -175,8 +195,15 @@ COPY ./xsltcli /xsltcli
 
 RUN cd /xsltcli && \
     export PATH="/opt/libxml2/bin:/opt/libxslt/bin:${PATH}" && \
-    make clean && \
-    make build
+    rm -rf build-otel && \
+    cmake -S . -B build-otel \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_PREFIX_PATH="/opt/opentelemetry;/usr/local" && \
+    cmake --build build-otel -j$(nproc) && \
+    cmake -E copy build-otel/bin/xsltcli /xsltcli/xsltcli
+
+COPY ./scripts/check_otel_linkage.sh /usr/local/bin/check_otel_linkage
+RUN chmod 0755 /usr/local/bin/check_otel_linkage && /usr/local/bin/check_otel_linkage
 
 # Stage 0b: Export dependency bundle artifact
 FROM registry.suse.com/bci/bci-base:15.7 AS deps-bundle
@@ -193,6 +220,7 @@ COPY --from=deps-builder /ilf/eval_cli /ilf/eval_cli
 COPY --from=deps-builder /ilf/eval_server /ilf/eval_server
 COPY --from=deps-builder /ilf/build_tree_cli /ilf/build_tree_cli
 COPY --from=deps-builder /ilf/build_tree_kpmr_cli /ilf/build_tree_kpmr_cli
+COPY --from=deps-builder /ilf/src_inherent_cli /ilf/src_inherent_cli
 COPY --from=deps-builder /ilfx/build/bin /ilfx/build/bin
 COPY --from=deps-builder /ilfreporter-0.0.1/build/ilfreporter /ilfreporter-0.0.1/build/ilfreporter
 COPY --from=deps-builder /ilfreporter-0.0.1/build/kpmr_cli /ilfreporter-0.0.1/build/kpmr_cli

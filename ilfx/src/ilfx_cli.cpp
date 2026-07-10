@@ -29,7 +29,7 @@ int main(int argc, char* argv[]) {
     std::string data_path = absl::GetFlag(FLAGS_data_path);
     std::string weight_path = absl::GetFlag(FLAGS_weight_path);
     auto otel = ilfx::otel::runtimeFromFlags("ilfx_cli");
-    ilfx::otel::RootSpan root(otel, "ilfx_cli.run");
+    ilfx::otel::RootSpan root(otel, "ilfx_cli");
     root.setAttribute("data_path", data_path);
     root.setAttribute("weight_path", weight_path);
 

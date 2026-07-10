@@ -10,6 +10,7 @@
 #include <libxslt/xsltInternals.h>
 #include <libxslt/transform.h>
 #include <libxslt/xsltutils.h>
+#include "otel_cli_c.h"
 
 extern int xmlLoadExtDtdDefaultValue;
 
@@ -21,7 +22,7 @@ static void usage(const char *name) {
 }
 
 int
-main(int argc, char **argv) {
+run_cli(int argc, char **argv, fsis_otel_runtime *otel) {
 	int i;
 	const char *params[16 + 1];
 	int nbparams = 0;
@@ -62,10 +63,15 @@ main(int argc, char **argv) {
 	params[nbparams] = NULL;
 	xmlSubstituteEntitiesDefault(1);
 	xmlLoadExtDtdDefaultValue = 1;
+	fsis_otel_span *parse_span = fsis_otel_start_span(otel, "xsltcli.parse");
 	cur = xsltParseStylesheetFile((const xmlChar *)argv[i]);
 	i++;
 	doc = xmlParseFile(argv[i]);
+	fsis_otel_end_span(parse_span);
+
+	fsis_otel_span *transform_span = fsis_otel_start_span(otel, "xsltcli.transform");
 	res = xsltApplyStylesheet(cur, doc, params);
+	fsis_otel_end_span(transform_span);
 	
 	// Handle output file
 	if (output != NULL) {
@@ -78,7 +84,9 @@ main(int argc, char **argv) {
 		out = stdout;
 	}
 	
+	fsis_otel_span *write_span = fsis_otel_start_span(otel, "xsltcli.write");
 	xsltSaveResultToFile(out, res, cur);
+	fsis_otel_end_span(write_span);
 	
 	// Close output file if it was opened
 	if (output != NULL && out != NULL) {
@@ -93,4 +101,10 @@ main(int argc, char **argv) {
         xmlCleanupParser();
 	return(0);
 
+}
+
+int
+main(int argc, char **argv) {
+	fsis_otel_runtime *otel = fsis_otel_start("xsltcli");
+	return fsis_otel_finish(otel, run_cli(argc, argv, otel));
 }
