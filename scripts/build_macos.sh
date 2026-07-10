@@ -138,7 +138,7 @@ echo "==> Building ilf CLIs"
 rm -rf "${ROOT_DIR}/ilf/build-macos"
 cmake -S "${ROOT_DIR}/ilf" -B "${ROOT_DIR}/ilf/build-macos" \
   -DCMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH}" \
-  -DCMAKE_LIBRARY_PATH="${TINYCC_PREFIX}/lib"
+  -DTCC_ROOT="${TINYCC_PREFIX}"
 cmake --build "${ROOT_DIR}/ilf/build-macos"
 
 echo "==> Building ilfx"

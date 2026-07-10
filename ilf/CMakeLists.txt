@@ -11,7 +11,22 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(GLIB REQUIRED IMPORTED_TARGET glib-2.0)
 pkg_check_modules(XML2 REQUIRED IMPORTED_TARGET libxml-2.0)
 pkg_check_modules(GSL REQUIRED IMPORTED_TARGET gsl)
-find_library(TCC_LIBRARY NAMES tcc REQUIRED PATHS /usr/local/lib /opt/homebrew/lib)
+
+set(TCC_ROOT "" CACHE PATH "TinyCC installation prefix")
+find_path(TCC_INCLUDE_DIR
+    NAMES libtcc.h
+    HINTS ${TCC_ROOT}
+    PATH_SUFFIXES include
+    PATHS /usr/local/include /opt/homebrew/include
+    REQUIRED
+)
+find_library(TCC_LIBRARY
+    NAMES tcc
+    HINTS ${TCC_ROOT}
+    PATH_SUFFIXES lib
+    PATHS /usr/local/lib /opt/homebrew/lib
+    REQUIRED
+)
 
 find_package(opentelemetry-cpp CONFIG REQUIRED)
 add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../telemetry"
@@ -29,7 +44,7 @@ set(ILF_COMMON_SOURCES
 )
 
 add_library(ilf_common STATIC ${ILF_COMMON_SOURCES})
-target_include_directories(ilf_common PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src /usr/local/include)
+target_include_directories(ilf_common PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src ${TCC_INCLUDE_DIR})
 target_link_libraries(ilf_common
     PUBLIC PkgConfig::GLIB PkgConfig::XML2 PkgConfig::GSL ${TCC_LIBRARY} ${CMAKE_DL_LIBS} m)
 
