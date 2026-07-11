@@ -151,6 +151,15 @@ int main(int argc, char *argv[])
                 ilfx::chaiscript_diagnostics::record(evaluate_span, e);
                 throw;
             }
+            const auto& metrics = evaluator.telemetry();
+            evaluate_span.setAttribute("ilfx.rule.compile_count", static_cast<std::int64_t>(metrics.rule_compile_count));
+            evaluate_span.setAttribute("ilfx.rule.executions", static_cast<std::int64_t>(metrics.rule_executions));
+            evaluate_span.setAttribute("ilfx.helper.cache_hits", static_cast<std::int64_t>(metrics.helper_cache_hits));
+            evaluate_span.setAttribute("ilfx.helper.cache_misses", static_cast<std::int64_t>(metrics.helper_cache_misses));
+            evaluate_span.setAttribute("ilfx.recursive.evaluations", static_cast<std::int64_t>(metrics.recursive_evaluations));
+            evaluate_span.setAttribute("ilfx.recursive.max_depth", static_cast<std::int64_t>(metrics.maximum_recursion_depth));
+            evaluate_span.setAttribute("ilfx.recursive.cycles", static_cast<std::int64_t>(metrics.cycles));
+            evaluate_span.setAttribute("ilfx.evaluation.duration_ms", static_cast<std::int64_t>(metrics.evaluation_duration_ms));
             if (inherent_status != SuccessOperationStatus) {
                 evaluate_span.markError("Inherent Risk Profile evaluation failed");
             }

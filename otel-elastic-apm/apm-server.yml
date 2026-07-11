@@ -1,0 +1,8 @@
+apm-server:
+  host: "0.0.0.0:8200"
+
+output.elasticsearch:
+  hosts: ["http://elasticsearch:9200"]
+
+# Keep logs quiet on a small test VM. Do not place secrets in this file.
+logging.level: warning
