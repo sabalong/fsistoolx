@@ -269,7 +269,35 @@ namespace ChaiClient::testing
         {
             cli->evaluate("var x = undefined_variable");
         },
-        chaiscript::exception::eval_error);
+        ilfx::chaiscript_diagnostics::EvaluationError);
+    }
+
+    TEST_F(ChaiCLITest, EvaluationErrorContainsCompleteExecutionContext)
+    {
+        const std::string script = "var x = undefined_variable";
+        try {
+            cli->evaluate(
+                script,
+                "fsi",
+                "datasource code=R001, company=Example Bank",
+                {
+                    {"code", "R001"},
+                    {"companyName", "Example Bank"},
+                    {"value", "42.5"},
+                });
+            FAIL() << "expected ChaiScript evaluation to fail";
+        } catch (const ilfx::chaiscript_diagnostics::EvaluationError& error) {
+            EXPECT_EQ(error.script(), script);
+            EXPECT_EQ(error.ruleKind(), "fsi");
+            EXPECT_EQ(error.entity(), "datasource code=R001, company=Example Bank");
+            EXPECT_EQ(error.context().at("value"), "42.5");
+
+            const std::string diagnostic = error.what();
+            EXPECT_NE(diagnostic.find(script), std::string::npos);
+            EXPECT_NE(diagnostic.find("rule_kind: fsi"), std::string::npos);
+            EXPECT_NE(diagnostic.find("companyName = Example Bank"), std::string::npos);
+            EXPECT_FALSE(error.formattedError().empty());
+        }
     }
 
     // Test: Multiple evaluate calls maintain state

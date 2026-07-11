@@ -126,7 +126,12 @@ int main(int argc, char* argv[]) {
         OperationStatus status;
         {
             ilfx::otel::ScopedSpan evaluate_span(otel, "riskprofilekpmr_cli.evaluate_kpmr_riskprofile");
-            status = evaluator.evaluateKPMRRiskProfile();
+            try {
+                status = evaluator.evaluateKPMRRiskProfile();
+            } catch (const ilfx::chaiscript_diagnostics::EvaluationError& e) {
+                ilfx::chaiscript_diagnostics::record(evaluate_span, e);
+                throw;
+            }
             if (status != SuccessOperationStatus) {
                 evaluate_span.markError("Risk profile evaluation failed");
             }
@@ -180,6 +185,10 @@ int main(int argc, char* argv[]) {
             std::cerr << "Error: Risk profile evaluation failed\n";
             return root.finish(1);
         }
+    } catch (const ilfx::chaiscript_diagnostics::EvaluationError& e) {
+        ilfx::chaiscript_diagnostics::record(root, e);
+        std::cerr << e.what() << "\n";
+        return root.finish(1);
     } catch (const std::exception& e) {
         root.markError("Exception occurred: " + std::string(e.what()));
         root.setAttribute("exception.type", "std::exception");

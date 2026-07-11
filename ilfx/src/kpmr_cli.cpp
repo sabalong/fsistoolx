@@ -91,7 +91,12 @@ int main(int argc, char* argv[]) {
         OperationStatus status;
         {
             ilfx::otel::ScopedSpan evaluate_span(otel, "kpmr_cli.evaluate");
-            status = evaluator->evaluate();
+            try {
+                status = evaluator->evaluate();
+            } catch (const ilfx::chaiscript_diagnostics::EvaluationError& e) {
+                ilfx::chaiscript_diagnostics::record(evaluate_span, e);
+                throw;
+            }
             if (status != SuccessOperationStatus) {
                 evaluate_span.markError("Evaluation failed");
             }
@@ -152,6 +157,10 @@ int main(int argc, char* argv[]) {
             std::cerr << "Evaluation failed\n";
             return root.finish(1);
         }
+    } catch (const ilfx::chaiscript_diagnostics::EvaluationError& e) {
+        ilfx::chaiscript_diagnostics::record(root, e);
+        std::cerr << e.what() << "\n";
+        return root.finish(1);
     } catch (const std::exception& e) {
         const std::string message = "Exception occurred: " + std::string(e.what());
         root.markError(message);

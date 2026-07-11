@@ -2,6 +2,7 @@
 #define ILF_CHAICLI_HPP
 
 #include "allheaders.hpp"
+#include "chaiscript_diagnostics.hpp"
 #include <chaiscript/chaiscript.hpp>
 
 namespace ChaiClient
@@ -34,10 +35,15 @@ namespace ChaiClient
             return chai;
         }
 
-        EvalResult evaluate(const std::string& code)
+        EvalResult evaluate(
+            const std::string& code,
+            const std::string& rule_kind = "standalone",
+            const std::string& entity = "chaiscript",
+            ilfx::chaiscript_diagnostics::Context context = {})
         {
             EvalResult result;
-            result.value = chai->eval(code);
+            result.value = ilfx::chaiscript_diagnostics::evaluateBoxed(
+                *chai, code, rule_kind, entity, std::move(context));
             result.status = SuccessOperationStatus;
 
             return result;

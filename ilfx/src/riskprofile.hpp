@@ -8,6 +8,7 @@
 #include "KPMRRiskProfile.hxx"
 #include <chaiscript/chaiscript.hpp>
 #include <chaiscript/extras/math.hpp>
+#include "chaiscript_diagnostics.hpp"
 #include <antlr4-runtime.h>
 #include "ThresholdLexer.h"
 #include "ThresholdParser.h"
@@ -251,7 +252,12 @@ namespace riskprofile {
                         setupChaiScriptEvaluator(chai);
 
                         LOG(INFO) << "hooho";
-                        auto score = chai.eval<double>(scoreRule);
+                        auto score = ilfx::chaiscript_diagnostics::evaluate<double>(
+                            chai,
+                            scoreRule,
+                            "score",
+                            "inherent profile code=" + code,
+                            {{"code", code}});
 
                         if (node.weight().present()) {
                             score *= node.weight().get();
@@ -298,7 +304,12 @@ namespace riskprofile {
                         chaiscript::ChaiScript chai;
                         setupChaiScriptEvaluator(chai);
 
-                        auto score = chai.eval<double>(scoreRule);
+                        auto score = ilfx::chaiscript_diagnostics::evaluate<double>(
+                            chai,
+                            scoreRule,
+                            "score",
+                            "kpmr profile code=" + code,
+                            {{"code", code}});
 
                         if (node.weight().present()) {
                             score *= node.weight().get();
@@ -811,15 +822,16 @@ namespace riskprofile {
                 chai.add(chaiscript::var(std::string(node.score_formula().get())), "rating_to_score");
             }
             
-            auto result = 0.0;
-
-            try {
-                result = chai.eval<double>(node.value_rule().get());
-
-            }catch (const std::exception& e) {
-                std::cerr << "Error evaluating value rule for node " << node.Profile_ID() << ": " << e.what() << std::endl;
-                result = 0.0; // Default to 0 on error
-            }
+            auto result = ilfx::chaiscript_diagnostics::evaluate<double>(
+                chai,
+                node.value_rule().get(),
+                "value",
+                "inherent profile node=" + node.Profile_ID(),
+                {
+                    {"profile_id", node.Profile_ID()},
+                    {"threshold", node.threshold().present() ? node.threshold().get() : ""},
+                    {"rating_to_score", node.score_formula().present() ? node.score_formula().get() : ""},
+                });
 
             std::cout << indent << "    Evaluated Value Rule Result: " << result << std::endl;
             
@@ -843,13 +855,17 @@ namespace riskprofile {
                 chai.add(chaiscript::var(std::strtod(node.computed_value().get().c_str(), nullptr)), "value");
             }
 
-            auto result = -1;
-            try {
-                result = chai.eval<int>(node.rating_rule().get());
-            } catch (const std::exception& e) {
-                std::cerr << "Error evaluating rating rule for node " << node.Profile_ID() << ": " << e.what() << std::endl;
-                result = -1; // Default to -1 on error
-            }
+            auto result = ilfx::chaiscript_diagnostics::evaluate<int>(
+                chai,
+                node.rating_rule().get(),
+                "rating",
+                "inherent profile node=" + node.Profile_ID(),
+                {
+                    {"profile_id", node.Profile_ID()},
+                    {"threshold", node.threshold().present() ? node.threshold().get() : ""},
+                    {"rating_to_score", node.score_formula().present() ? node.score_formula().get() : ""},
+                    {"value", node.computed_value().present() ? node.computed_value().get() : ""},
+                });
 
             std::cout << indent << "    Evaluated Rating Rule Result: " << result << std::endl;
 
@@ -876,13 +892,19 @@ namespace riskprofile {
                 chai.add(chaiscript::var(std::stoi(node.computed_rating().get())), "rating");
             }
 
-            auto result = 0.0;
-            try {
-                result = chai.eval<double>(node.score_rule().get());
-            } catch (const std::exception& e) {
-                std::cerr << "Error evaluating score rule for node " << node.Profile_ID() << ": " << e.what() << std::endl;
-                result = 0.0; // Default to 0 on error
-            }
+            auto result = ilfx::chaiscript_diagnostics::evaluate<double>(
+                chai,
+                node.score_rule().get(),
+                "score",
+                "inherent profile node=" + node.Profile_ID(),
+                {
+                    {"profile_id", node.Profile_ID()},
+                    {"threshold", node.threshold().present() ? node.threshold().get() : ""},
+                    {"rating_to_score", node.score_formula().present() ? node.score_formula().get() : ""},
+                    {"value", node.computed_value().present() ? node.computed_value().get() : ""},
+                    {"rating", node.computed_rating().present() ? node.computed_rating().get() : ""},
+                    {"weight", node.weight().present() ? ilfx::chaiscript_diagnostics::value(node.weight().get()) : ""},
+                });
 
             std::cout << indent << "    Evaluated Score Rule Result: " << result << std::endl;
 
@@ -936,13 +958,12 @@ namespace riskprofile {
                     chaiscript::ChaiScript chai;
                     setupChaiScriptEvaluator(chai);
 
-                    auto computed_rating = -1;
-                    try {
-                        computed_rating = chai.eval<int>(childNode.rating_rule().get());
-                    } catch (const std::exception& e) {
-                        std::cerr << "Error evaluating rating rule for child node " << childNode.profile_id() << ": " << e.what() << std::endl;
-                        computed_rating = -1; // Default to -1 on error
-                    }
+                    auto computed_rating = ilfx::chaiscript_diagnostics::evaluate<int>(
+                        chai,
+                        childNode.rating_rule().get(),
+                        "rating",
+                        "kpmr child node=" + childNode.profile_id(),
+                        {{"profile_id", childNode.profile_id()}});
 
                     std::cout << indentChild << "Computed Child Rating: " << computed_rating << std::endl;
 
@@ -961,13 +982,16 @@ namespace riskprofile {
                         chai.add(chaiscript::var(std::stoi(childNode.computed_rating().get())), "rating");
                     }
 
-                    auto computed_score = 0.0;
-                    try {
-                        computed_score = chai.eval<double>(childNode.score_rule().get());
-                    } catch (const std::exception& e) {
-                        std::cerr << "Error evaluating score rule for child node " << childNode.profile_id() << ": " << e.what() << std::endl;
-                        computed_score = 0.0; // Default to 0 on error
-                    }
+                    auto computed_score = ilfx::chaiscript_diagnostics::evaluate<double>(
+                        chai,
+                        childNode.score_rule().get(),
+                        "score",
+                        "kpmr child node=" + childNode.profile_id(),
+                        {
+                            {"profile_id", childNode.profile_id()},
+                            {"rating", childNode.computed_rating().present() ? childNode.computed_rating().get() : ""},
+                            {"weight", childNode.weight().present() ? ilfx::chaiscript_diagnostics::value(childNode.weight().get()) : ""},
+                        });
 
                     std::cout << indentChild << "Computed Child Score: " << computed_score << std::endl;
 

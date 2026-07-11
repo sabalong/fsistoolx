@@ -4,6 +4,7 @@
 #include "allheaders.hpp"
 #include "KPMRDataSource.hxx"
 #include "chaicli.hpp"
+#include "chaiscript_diagnostics.hpp"
 #include "chaiscript/extras/math.hpp"
 #include "absl/log/log.h"
 #include "Weight.hxx"
@@ -226,7 +227,16 @@ namespace kpmr::datasource
                 chai.add(chaiscript::var(childrenValues), "childrenValues");
 
                 LOG(INFO) << "Evaluating Consolidation Rule for item " << item.code() << ": " << consolidationRule;
-                chaiscript::Boxed_Value v = chai.eval(consolidationRule);
+                chaiscript::Boxed_Value v = ilfx::chaiscript_diagnostics::evaluateBoxed(
+                    chai,
+                    consolidationRule,
+                    "consolidation",
+                    "kpmr item id=" + item.id() + ", code=" + item.code(),
+                    {
+                        {"id", item.id()},
+                        {"code", item.code()},
+                        {"childrenValues", ilfx::chaiscript_diagnostics::value(childrenValues)},
+                    });
                 int consolidatedValue = chai.boxed_cast<double>(v);
                 item.consolidate(consolidatedValue);
                 LOG(INFO) << "Consolidated value for item " << item.id() << ": " << consolidatedValue;
