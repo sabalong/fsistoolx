@@ -1,0 +1,62 @@
+name: otel-elastic-apm
+
+# A deliberately small local/test stack for a 2 vCPU / 2 GB VM.
+# It is not production-hardened: Elasticsearch security is disabled and all
+# published ports bind to localhost by default.
+services:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${ELASTIC_VERSION:-8.17.1}
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - xpack.ml.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    ports:
+      - "${OTEL_BIND_ADDRESS:-127.0.0.1}:9200:9200"
+    mem_limit: 900m
+    cpus: 1.0
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS 'http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=1s' >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 20s
+    restart: unless-stopped
+
+  apm-server:
+    image: docker.elastic.co/apm/apm-server:${ELASTIC_VERSION:-8.17.1}
+    command: ["apm-server", "-e", "-c", "/usr/share/apm-server/apm-server.yml"]
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    volumes:
+      - ./otel-elastic-apm/apm-server.yml:/usr/share/apm-server/apm-server.yml:ro
+    ports:
+      - "${OTEL_BIND_ADDRESS:-127.0.0.1}:8200:8200"
+    mem_limit: 220m
+    cpus: 0.35
+    restart: unless-stopped
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.117.0
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    depends_on:
+      - apm-server
+    volumes:
+      - ./otel-elastic-apm/otel-collector.yml:/etc/otelcol-contrib/config.yaml:ro
+    ports:
+      # OTLP/gRPC and OTLP/HTTP. Keep the default loopback binding on a VM.
+      - "${OTEL_BIND_ADDRESS:-127.0.0.1}:4317:4317"
+      - "${OTEL_BIND_ADDRESS:-127.0.0.1}:4318:4318"
+    mem_limit: 140m
+    cpus: 0.35
+    restart: unless-stopped
+
+volumes:
+  elasticsearch-data:

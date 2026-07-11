@@ -1,0 +1,38 @@
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  # Bound collector memory so Elasticsearch remains usable on a 2 GB VM.
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 96
+    spike_limit_mib: 32
+  batch:
+    send_batch_size: 256
+    timeout: 5s
+
+exporters:
+  otlphttp/elastic_apm:
+    # APM Server accepts OTLP/HTTP at /v1/{traces,metrics,logs}.
+    endpoint: http://apm-server:8200
+
+service:
+  extensions: [health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlphttp/elastic_apm]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlphttp/elastic_apm]

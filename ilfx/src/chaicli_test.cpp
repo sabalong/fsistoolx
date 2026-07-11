@@ -312,6 +312,30 @@ namespace ChaiClient::testing
         EXPECT_EQ(value, 15);
     }
 
+    TEST(ChaiScriptSharedRuntimeTest, RuleFunctionsIsolateLocalsAndAllowNestedHelperEvaluation)
+    {
+        chaiscript::ChaiScript chai;
+
+        chai.add(chaiscript::fun([&chai](const std::string& function_name) {
+            auto function = chai.eval<std::function<double()>>(function_name);
+            return function();
+        }), "evaluateRuleByName");
+
+        chai.eval("def child_rule() { var result = 4.0; return result; }");
+        chai.eval(
+            "def parent_rule() { "
+            "  var result = evaluateRuleByName(\"child_rule\"); "
+            "  return result * 2.0; "
+            "}");
+
+        auto child = chai.eval<std::function<double()>>("child_rule");
+        auto parent = chai.eval<std::function<double()>>("parent_rule");
+
+        EXPECT_DOUBLE_EQ(child(), 4.0);
+        EXPECT_DOUBLE_EQ(parent(), 8.0);
+        EXPECT_DOUBLE_EQ(parent(), 8.0);
+    }
+
     // Test: Destructor cleanup
     TEST_F(ChaiCLITest, DestructorCleanup)
     {
