@@ -58,17 +58,31 @@ void runInteractiveMode(ChaiClient::ChaiCLI& cli) {
         }
         
         try {
-            ChaiClient::EvalResult result = cli.evaluate(line);
+            ChaiClient::EvalResult result = cli.evaluate(
+                line,
+                "interactive",
+                "chaiscript interactive input");
             
             if (result.status == SuccessOperationStatus) {
                 // Try to print the result
                 try {
                     auto chai = cli.getChai();
-                    std::cout << chai->eval<std::string>("to_string(" + line + ")") << "\n";
+                    const std::string display_script = "to_string(" + line + ")";
+                    std::cout << ilfx::chaiscript_diagnostics::evaluate<std::string>(
+                                     *chai,
+                                     display_script,
+                                     "interactive_result_format",
+                                     "chaiscript interactive result",
+                                     {{"input", line}})
+                              << "\n";
+                } catch (const ilfx::chaiscript_diagnostics::EvaluationError&) {
+                    throw;
                 } catch (...) {
                     std::cout << "[Execution completed]\n";
                 }
             }
+        } catch (const ilfx::chaiscript_diagnostics::EvaluationError&) {
+            throw;
         } catch (const std::exception& e) {
             std::cerr << "Error: " << e.what() << "\n";
         }
@@ -106,7 +120,12 @@ int main(int argc, char* argv[]) {
             // Run interactive REPL mode
             LOG(INFO) << "Starting interactive mode";
             ilfx::otel::ScopedSpan interactive_span(otel, "chaiscript_cli.interactive_session");
-            runInteractiveMode(cli);
+            try {
+                runInteractiveMode(cli);
+            } catch (const ilfx::chaiscript_diagnostics::EvaluationError& e) {
+                ilfx::chaiscript_diagnostics::record(interactive_span, e);
+                throw;
+            }
             return root.finish(0);
         }
         
@@ -146,7 +165,19 @@ int main(int argc, char* argv[]) {
         ChaiClient::EvalResult result;
         {
             ilfx::otel::ScopedSpan execute_span(otel, "chaiscript_cli.execute_script");
-            result = cli.evaluate(script_content);
+            try {
+                result = cli.evaluate(
+                    script_content,
+                    "standalone",
+                    "script file=" + script_path,
+                    {
+                        {"script_path", script_path},
+                        {"script.bytes", ilfx::chaiscript_diagnostics::value(script_content.length())},
+                    });
+            } catch (const ilfx::chaiscript_diagnostics::EvaluationError& e) {
+                ilfx::chaiscript_diagnostics::record(execute_span, e);
+                throw;
+            }
             if (result.status != SuccessOperationStatus) {
                 execute_span.markError("Script execution failed");
             }
@@ -172,14 +203,9 @@ int main(int argc, char* argv[]) {
             return root.finish(1);
         }
         
-    } catch (const chaiscript::exception::eval_error& e) {
-        const std::string message = "ChaiScript evaluation error: " + std::string(e.what());
-        root.markError(message);
-        root.setAttribute("exception.type", "chaiscript::exception::eval_error");
-        root.setAttribute("exception.message", std::string(e.what()));
-        LOG(ERROR) << "ChaiScript evaluation error: " << e.what();
-        std::cerr << "ChaiScript Error: " << e.what() << "\n";
-        std::cerr << "  " << e.pretty_print() << "\n";
+    } catch (const ilfx::chaiscript_diagnostics::EvaluationError& e) {
+        ilfx::chaiscript_diagnostics::record(root, e);
+        std::cerr << e.what() << "\n";
         return root.finish(1);
     } catch (const std::exception& e) {
         const std::string message = "Exception occurred: " + std::string(e.what());

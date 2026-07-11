@@ -4,6 +4,7 @@
 #include "allheaders.hpp"
 #include "InherentDataSource.hxx"
 #include "chaicli.hpp"
+#include "chaiscript_diagnostics.hpp"
 #include "chaiscript/extras/math.hpp"
 #include "absl/log/log.h"
 #include "Weight.hxx"
@@ -308,7 +309,17 @@ namespace inherent::datasource
                         chai.add(chaiscript::var(companyType), "companyType");
                         chai.add(chaiscript::var(value), "value");
 
-                        chaiscript::Boxed_Value v =  chai.eval(fsiRule);
+                        chaiscript::Boxed_Value v = ilfx::chaiscript_diagnostics::evaluateBoxed(
+                            chai,
+                            fsiRule,
+                            "fsi",
+                            "datasource code=" + code + ", company=" + companyName,
+                            {
+                                {"code", code},
+                                {"companyName", companyName},
+                                {"companyType", companyType},
+                                {"value", ilfx::chaiscript_diagnostics::value(value)},
+                            });
                         auto computedValue = safeBoxedCastDouble(v);
                         if (!computedValue.has_value())
                         {
@@ -371,7 +382,12 @@ namespace inherent::datasource
 
                 chaiscript::ChaiScript chai;
                 setupChaiScriptEvaluator(chai);
-                chaiscript::Boxed_Value v = chai.eval(consolidationRule);
+                chaiscript::Boxed_Value v = ilfx::chaiscript_diagnostics::evaluateBoxed(
+                    chai,
+                    consolidationRule,
+                    "consolidation",
+                    "datasource code=" + item.code(),
+                    {{"code", item.code()}});
                 auto consolidatedValue = safeBoxedCastDouble(v);
                 if (!consolidatedValue.has_value())
                 {
@@ -663,7 +679,12 @@ namespace inherent::datasource
 
                 chaiscript::ChaiScript chai;
                 setupChaiScriptEvaluator(chai);
-                chaiscript::Boxed_Value v = chai.eval(consolidationRule);
+                chaiscript::Boxed_Value v = ilfx::chaiscript_diagnostics::evaluateBoxed(
+                    chai,
+                    consolidationRule,
+                    "consolidation",
+                    "datasource code=" + code,
+                    {{"code", code}});
                 auto consolidatedValue = safeBoxedCastDouble(v);
                 if (!consolidatedValue.has_value())
                 {

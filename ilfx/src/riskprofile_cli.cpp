@@ -145,7 +145,12 @@ int main(int argc, char *argv[])
         OperationStatus inherent_status;
         {
             ilfx::otel::ScopedSpan evaluate_span(otel, "riskprofile_cli.evaluate_inherent_riskprofile");
-            inherent_status = evaluator.evaluateInherentRiskProfile();
+            try {
+                inherent_status = evaluator.evaluateInherentRiskProfile();
+            } catch (const ilfx::chaiscript_diagnostics::EvaluationError& e) {
+                ilfx::chaiscript_diagnostics::record(evaluate_span, e);
+                throw;
+            }
             if (inherent_status != SuccessOperationStatus) {
                 evaluate_span.markError("Inherent Risk Profile evaluation failed");
             }
@@ -187,6 +192,12 @@ int main(int argc, char *argv[])
         }
 
         return root.finish(0);
+    }
+    catch (const ilfx::chaiscript_diagnostics::EvaluationError &e)
+    {
+        ilfx::chaiscript_diagnostics::record(root, e);
+        std::cerr << e.what() << "\n";
+        return root.finish(1);
     }
     catch (const std::exception &e)
     {
