@@ -62,7 +62,7 @@ int main(int argc, char* argv[]) {
     double x = absl::GetFlag(FLAGS_x);
     std::string variablesFlag = absl::GetFlag(FLAGS_variables);
     auto otel = ilfx::otel::runtimeFromFlags("exprtk_cli");
-    ilfx::otel::RootSpan root(otel, "exprtk_cli.run");
+    ilfx::otel::RootSpan root(otel, "exprtk_cli");
     root.setAttribute("expr.present", !expr.empty());
     root.setAttribute("file", file);
     root.setAttribute("x", x);

@@ -134,7 +134,7 @@ int main(int argc, char* argv[]) {
     double value = absl::GetFlag(FLAGS_value);
     std::string variablesFlag = absl::GetFlag(FLAGS_variables);
     auto otel = ilfx::otel::runtimeFromFlags("rating_threshold_cli");
-    ilfx::otel::RootSpan root(otel, "rating_threshold_cli.run");
+    ilfx::otel::RootSpan root(otel, "rating_threshold_cli");
     root.setAttribute("threshold_file", thresholdFile);
     root.setAttribute("value", value);
     root.setAttribute("variables.present", !variablesFlag.empty());

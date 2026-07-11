@@ -14,6 +14,7 @@
 
 #include "eval.h"
 #include "risk_profile_tree.h"
+#include "otel_cli_c.h"
 
 static void
 print_usage(const char *prog)
@@ -37,8 +38,8 @@ print_usage(const char *prog)
     fprintf(stderr, "        --output risk_profile_output.xml\n");
 }
 
-int
-main(int argc, char **argv)
+static int
+run_cli(int argc, char **argv, fsis_otel_runtime *otel)
 {
     const char *risk_profile_path = NULL;
     const char *sandi_source_path = NULL;
@@ -133,14 +134,19 @@ main(int argc, char **argv)
     // Step 1: Parse all XML files
     printf("[1/5] Loading XML files...\n");
 
+    fsis_otel_span *load_span = fsis_otel_start_span(otel, "eval_cli.load");
     xmlDocPtr risk_profile_doc = xmlReadFile(risk_profile_path, NULL, 0);
     if (!risk_profile_doc) {
+        fsis_otel_span_error(load_span, "failed to parse risk profile XML");
+        fsis_otel_end_span(load_span);
         fprintf(stderr, "Failed to parse risk profile XML file: %s\n", risk_profile_path);
         return 2;
     }
 
     xmlDocPtr sandi_source_doc = xmlReadFile(sandi_source_path, NULL, 0);
     if (!sandi_source_doc) {
+        fsis_otel_span_error(load_span, "failed to parse source XML");
+        fsis_otel_end_span(load_span);
         fprintf(stderr, "Failed to parse sandi source XML file: %s\n", sandi_source_path);
         xmlFreeDoc(risk_profile_doc);
         return 2;
@@ -148,6 +154,8 @@ main(int argc, char **argv)
 
     xmlDocPtr rating_to_score_doc = xmlReadFile(rating_to_score_path, NULL, 0);
     if (!rating_to_score_doc) {
+        fsis_otel_span_error(load_span, "failed to parse rating mapping XML");
+        fsis_otel_end_span(load_span);
         fprintf(stderr, "Failed to parse rating-to-score XML file: %s\n", rating_to_score_path);
         xmlFreeDoc(risk_profile_doc);
         xmlFreeDoc(sandi_source_doc);
@@ -158,6 +166,8 @@ main(int argc, char **argv)
     if (pic_path) {
         pic_doc = xmlReadFile(pic_path, NULL, 0);
         if (!pic_doc) {
+            fsis_otel_span_error(load_span, "failed to parse PIC XML");
+            fsis_otel_end_span(load_span);
             fprintf(stderr, "Failed to parse pic XML file: %s\n", pic_path);
             xmlFreeDoc(risk_profile_doc);
             xmlFreeDoc(sandi_source_doc);
@@ -167,14 +177,18 @@ main(int argc, char **argv)
     } else {
         pic_doc = sandi_source_doc; // default to sandi_source when --pic not provided
     }
+    fsis_otel_end_span(load_span);
 
     printf("   ✓ All XML files loaded successfully\n\n");
 
     // Step 2: Build risk profile tree
     printf("[2/5] Building risk profile tree...\n");
 
+    fsis_otel_span *build_span = fsis_otel_start_span(otel, "eval_cli.build_tree");
     GNode *risk_tree = build_risk_profile_tree(risk_profile_doc);
     if (!risk_tree) {
+        fsis_otel_span_error(build_span, "failed to build risk profile tree");
+        fsis_otel_end_span(build_span);
         fprintf(stderr, "Failed to build risk profile tree\n");
         xmlFreeDoc(risk_profile_doc);
         xmlFreeDoc(sandi_source_doc);
@@ -183,6 +197,7 @@ main(int argc, char **argv)
             xmlFreeDoc(pic_doc);
         return 3;
     }
+    fsis_otel_end_span(build_span);
 
     guint node_count = g_node_n_nodes(risk_tree, G_TRAVERSE_ALL);
     printf("   ✓ Built tree with %u nodes\n\n", node_count);
@@ -197,9 +212,12 @@ main(int argc, char **argv)
 
     ILFResult res = { 0 };
 
+    fsis_otel_span *evaluate_span = fsis_otel_start_span(otel, "eval_cli.evaluate");
     ilf_status_t status = evaluate_risk_profile_tree(risk_profile_doc, &ctx, &res);
 
     if (status != ILF_SUCCESS) {
+        fsis_otel_span_error(evaluate_span, "risk profile evaluation failed");
+        fsis_otel_end_span(evaluate_span);
         fprintf(stderr, "Evaluation failed: %s\n",
                 res.error_message ? res.error_message : "Unknown error");
 
@@ -219,15 +237,19 @@ main(int argc, char **argv)
         xmlCleanupParser();
         return 4;
     }
+    fsis_otel_end_span(evaluate_span);
 
     printf("   ✓ Risk profile evaluation completed\n\n");
 
     // Step 4: Apply rating-to-score mapping
     printf("[4/5] Applying rating-to-score mapping...\n");
 
+    fsis_otel_span *mapping_span = fsis_otel_start_span(otel, "eval_cli.apply_rating_mapping");
     status = apply_rating_to_score_mapping(risk_profile_doc, rating_to_score_doc);
 
     if (status != ILF_SUCCESS) {
+        fsis_otel_span_error(mapping_span, "rating mapping failed");
+        fsis_otel_end_span(mapping_span);
         fprintf(stderr, "Rating-to-score mapping failed\n");
 
         // Cleanup
@@ -246,15 +268,19 @@ main(int argc, char **argv)
         xmlCleanupParser();
         return 5;
     }
+    fsis_otel_end_span(mapping_span);
 
     printf("   ✓ Rating-to-score mapping completed\n\n");
 
     // Step 5: Save output
     printf("[5/5] Saving results to %s...\n", output_path);
 
+    fsis_otel_span *write_span = fsis_otel_start_span(otel, "eval_cli.write");
     status = save_risk_profile_result(risk_profile_doc, output_path);
 
     if (status != ILF_SUCCESS) {
+        fsis_otel_span_error(write_span, "failed to write output XML");
+        fsis_otel_end_span(write_span);
         fprintf(stderr, "Failed to save output file\n");
 
         // Cleanup
@@ -273,6 +299,7 @@ main(int argc, char **argv)
         xmlCleanupParser();
         return 6;
     }
+    fsis_otel_end_span(write_span);
 
     printf("   ✓ Output saved successfully\n\n");
 
@@ -296,4 +323,11 @@ main(int argc, char **argv)
     xmlCleanupParser();
 
     return 0;
+}
+
+int
+main(int argc, char **argv)
+{
+    fsis_otel_runtime *otel = fsis_otel_start("eval_cli");
+    return fsis_otel_finish(otel, run_cli(argc, argv, otel));
 }

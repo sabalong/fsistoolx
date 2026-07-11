@@ -14,6 +14,7 @@
 
 #include "eval.h"
 #include "hdr.h"
+#include "otel_cli_c.h"
 
 static void
 print_usage(const char *prog)
@@ -50,8 +51,8 @@ print_usage(const char *prog)
     fprintf(stderr, "        --output-doc results/doc_output.xml\n");
 }
 
-int
-main(int argc, char **argv)
+static int
+run_cli(int argc, char **argv, fsis_otel_runtime *otel)
 {
     const char *input_path = NULL;
     const char *pic_path = NULL;
@@ -131,8 +132,11 @@ main(int argc, char **argv)
 
     // Parse input XML file
     printf("1. Parsing input XML file...\n");
+    fsis_otel_span *load_span = fsis_otel_start_span(otel, "src_inherent_cli.load");
     xmlDocPtr input_doc = xmlParseFile(input_path);
     if (!input_doc) {
+        fsis_otel_span_error(load_span, "failed to parse input XML");
+        fsis_otel_end_span(load_span);
         fprintf(stderr, "Error: Failed to parse input file: %s\n", input_path);
         xmlCleanupParser();
         return 1;
@@ -143,11 +147,14 @@ main(int argc, char **argv)
     printf("2. Parsing PIC XML file...\n");
     xmlDocPtr pic_doc = xmlParseFile(pic_path);
     if (!pic_doc) {
+        fsis_otel_span_error(load_span, "failed to parse PIC XML");
+        fsis_otel_end_span(load_span);
         fprintf(stderr, "Error: Failed to parse PIC file: %s\n", pic_path);
         xmlFreeDoc(input_doc);
         xmlCleanupParser();
         return 1;
     }
+    fsis_otel_end_span(load_span);
     printf("   ✓ PIC file parsed successfully\n");
 
     // Create evaluation context
@@ -160,9 +167,12 @@ main(int argc, char **argv)
     // Evaluate source inherent
     printf("4. Evaluating source inherent logic (logicLjk)...\n");
     ILFResult src_result;
+    fsis_otel_span *evaluate_span = fsis_otel_start_span(otel, "src_inherent_cli.evaluate_source");
     ilf_status_t status = evaluate_src_inherent(input_doc, &eval_ctx, &src_result);
 
     if (status != ILF_SUCCESS) {
+        fsis_otel_span_error(evaluate_span, "source inherent evaluation failed");
+        fsis_otel_end_span(evaluate_span);
         fprintf(stderr, "Error: Source inherent evaluation failed\n");
         if (src_result.error_message) {
             fprintf(stderr, "   Error message: %s\n", src_result.error_message);
@@ -174,6 +184,7 @@ main(int argc, char **argv)
         xmlCleanupParser();
         return 1;
     }
+    fsis_otel_end_span(evaluate_span);
     printf("   ✓ Source inherent evaluation completed\n");
     printf("   ✓ Updated PIC document saved to: %s\n", output_pic_path);
 
@@ -181,9 +192,12 @@ main(int argc, char **argv)
     if (!skip_konsolidasi) {
         printf("5. Evaluating konsolidasi inherent logic (logicKonsolidasi)...\n");
         ILFResult kons_result;
+        fsis_otel_span *consolidate_span = fsis_otel_start_span(otel, "src_inherent_cli.evaluate_consolidation");
         status = evaluate_konsolidasi_inherent(input_doc, &eval_ctx, &kons_result);
 
         if (status != ILF_SUCCESS) {
+            fsis_otel_span_error(consolidate_span, "consolidation evaluation failed");
+            fsis_otel_end_span(consolidate_span);
             fprintf(stderr, "Error: Konsolidasi inherent evaluation failed\n");
             if (kons_result.error_message) {
                 fprintf(stderr, "   Error message: %s\n", kons_result.error_message);
@@ -195,6 +209,7 @@ main(int argc, char **argv)
             xmlCleanupParser();
             return 1;
         }
+        fsis_otel_end_span(consolidate_span);
         printf("   ✓ Konsolidasi inherent evaluation completed\n");
         printf("   ✓ Updated document saved to: %s\n", output_doc_path);
     } else {
@@ -217,4 +232,11 @@ main(int argc, char **argv)
     }
 
     return 0;
+}
+
+int
+main(int argc, char **argv)
+{
+    fsis_otel_runtime *otel = fsis_otel_start("src_inherent_cli");
+    return fsis_otel_finish(otel, run_cli(argc, argv, otel));
 }

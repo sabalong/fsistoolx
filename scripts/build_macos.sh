@@ -97,6 +97,28 @@ export PATH="${LIBXML2_PREFIX}/bin:${LIBXSLT_PREFIX}/bin:${PATH}"
 export PKG_CONFIG_PATH="${GLIB_PREFIX}/lib/pkgconfig:${LIBXML2_PREFIX}/lib/pkgconfig:${LIBXSLT_PREFIX}/lib/pkgconfig:${GSL_PREFIX}/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
 export CMAKE_PREFIX_PATH="${BREW_PREFIX}:${CMAKE_PREFIX_PATH:-}"
 
+OTEL_BUILD_DIR="${ROOT_DIR}/tools/opentelemetry-cpp-1.27.0/build-macos"
+OTEL_INSTALL_DIR="${OTEL_BUILD_DIR}/install"
+
+echo "==> Building static OpenTelemetry C++ OTLP/HTTP SDK"
+rm -rf "${OTEL_BUILD_DIR}"
+cmake -S "${ROOT_DIR}/tools/opentelemetry-cpp-1.27.0" -B "${OTEL_BUILD_DIR}" \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_INSTALL_PREFIX="${OTEL_INSTALL_DIR}" \
+  -DBUILD_SHARED_LIBS=OFF \
+  -DBUILD_TESTING=OFF \
+  -DOPENTELEMETRY_INSTALL=ON \
+  -DWITH_OTLP_HTTP=ON \
+  -DWITH_OTLP_GRPC=OFF \
+  -DWITH_OTLP_FILE=OFF \
+  -DWITH_EXAMPLES=OFF \
+  -DWITH_EXAMPLES_HTTP=OFF \
+  -DWITH_FUNC_TESTS=OFF \
+  -DWITH_BENCHMARK=OFF
+cmake --build "${OTEL_BUILD_DIR}"
+cmake --install "${OTEL_BUILD_DIR}"
+export CMAKE_PREFIX_PATH="${OTEL_INSTALL_DIR}:${CMAKE_PREFIX_PATH}"
+
 echo "==> Building gofunct C archive"
 mkdir -p "${ROOT_DIR}/gofunct/build-macos"
 (
@@ -113,16 +135,11 @@ cmake -S "${ROOT_DIR}/ilfreporter-0.0.1" -B "${ROOT_DIR}/ilfreporter-0.0.1/build
 cmake --build "${ROOT_DIR}/ilfreporter-0.0.1/build-macos"
 
 echo "==> Building ilf CLIs"
-make -C "${ROOT_DIR}/ilf" BUILD_DIR=build-macos/obj TARGET_DIR=build-macos/bin clean
-make -C "${ROOT_DIR}/ilf" \
-  BUILD_DIR=build-macos/obj \
-  TARGET_DIR=build-macos/bin \
-  TCC_PREFIX="${TINYCC_PREFIX}" \
-  kpmr_source_tree_cli \
-  build_tree_kpmr_cli \
-  eval_cli \
-  eval_server \
-  build_tree_cli
+rm -rf "${ROOT_DIR}/ilf/build-macos"
+cmake -S "${ROOT_DIR}/ilf" -B "${ROOT_DIR}/ilf/build-macos" \
+  -DCMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH}" \
+  -DTCC_ROOT="${TINYCC_PREFIX}"
+cmake --build "${ROOT_DIR}/ilf/build-macos"
 
 echo "==> Building ilfx"
 rm -rf "${ROOT_DIR}/ilfx/build-macos"
@@ -131,8 +148,10 @@ cmake -S "${ROOT_DIR}/ilfx" -B "${ROOT_DIR}/ilfx/build-macos" \
 cmake --build "${ROOT_DIR}/ilfx/build-macos"
 
 echo "==> Building xsltcli"
-mkdir -p "${ROOT_DIR}/xsltcli/build-macos"
-make -C "${ROOT_DIR}/xsltcli" OUTPUT=build-macos/xsltcli clean build
+rm -rf "${ROOT_DIR}/xsltcli/build-macos"
+cmake -S "${ROOT_DIR}/xsltcli" -B "${ROOT_DIR}/xsltcli/build-macos" \
+  -DCMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH}"
+cmake --build "${ROOT_DIR}/xsltcli/build-macos"
 
 cat <<EOF
 ==> Done
@@ -141,5 +160,5 @@ macOS build outputs:
   ${ROOT_DIR}/ilfreporter-0.0.1/build-macos/
   ${ROOT_DIR}/ilf/build-macos/bin/
   ${ROOT_DIR}/ilfx/build-macos/bin/
-  ${ROOT_DIR}/xsltcli/build-macos/xsltcli
+  ${ROOT_DIR}/xsltcli/build-macos/bin/xsltcli
 EOF

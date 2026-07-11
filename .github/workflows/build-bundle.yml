@@ -87,7 +87,7 @@ jobs:
             ilfreporter-0.0.1/build-macos/xpath_cli \
             ilf/build-macos/bin \
             ilfx/build-macos/bin \
-            xsltcli/build-macos/xsltcli
+            xsltcli/build-macos/bin/xsltcli
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

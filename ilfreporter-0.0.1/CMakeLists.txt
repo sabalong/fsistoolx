@@ -5,8 +5,21 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-add_subdirectory(thirdparty/abseil-cpp)
-set(ILFREPORTER_ABSL_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/abseil-cpp")
+option(ILFREPORTER_ENABLE_OTEL "Enable OpenTelemetry tracing for reporter CLIs" ON)
+if(ILFREPORTER_ENABLE_OTEL)
+    find_package(opentelemetry-cpp CONFIG REQUIRED)
+    add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../telemetry"
+                     "${CMAKE_BINARY_DIR}/fsistoolx-telemetry")
+endif()
+
+if(NOT TARGET absl::base)
+    add_subdirectory(thirdparty/abseil-cpp)
+    set(ILFREPORTER_ABSL_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/abseil-cpp")
+else()
+    # Protobuf used by the installed OTel package may already provide Abseil.
+    # Use matching headers and libraries rather than mixing inline namespaces.
+    set(ILFREPORTER_ABSL_INCLUDE_DIR "")
+endif()
 
 find_path(ANTLR4_INCLUDE_DIR
         NAMES antlr4-runtime.h
@@ -173,6 +186,11 @@ target_link_libraries(kpmr_cli
         absl::flags
         absl::flags_parse
 )
+
+if(ILFREPORTER_ENABLE_OTEL)
+    fsistoolx_enable_otel(ilfreporter KEYWORD)
+    fsistoolx_enable_otel(kpmr_cli KEYWORD)
+endif()
 
 if(APPLE)
     set_target_properties(kpmr_cli PROPERTIES

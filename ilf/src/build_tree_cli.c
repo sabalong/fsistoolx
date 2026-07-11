@@ -13,6 +13,7 @@
 #include <string.h>
 
 #include "risk_profile_tree.h"
+#include "otel_cli_c.h"
 
 /**
  * Function to serialize a GNode tree to XML
@@ -133,8 +134,8 @@ print_usage(const char *prog)
     fprintf(stderr, "        --format xml\n");
 }
 
-int
-main(int argc, char **argv)
+static int
+run_cli(int argc, char **argv, fsis_otel_runtime *otel)
 {
     const char *input_path = NULL;
     const char *output_path = NULL;
@@ -203,23 +204,31 @@ main(int argc, char **argv)
     xmlInitParser();
 
     // Parse input XML file
+    fsis_otel_span *parse_span = fsis_otel_start_span(otel, "build_tree_cli.parse");
     xmlDocPtr doc = xmlParseFile(input_path);
     if (!doc) {
+        fsis_otel_span_error(parse_span, "failed to parse input XML");
+        fsis_otel_end_span(parse_span);
         fprintf(stderr, "Error: Failed to parse XML file '%s'\n", input_path);
         xmlCleanupParser();
         return 1;
     }
+    fsis_otel_end_span(parse_span);
 
     // Build the risk profile tree
     fprintf(stderr, "Building risk profile tree from '%s'...\n", input_path);
+    fsis_otel_span *build_span = fsis_otel_start_span(otel, "build_tree_cli.build");
     GNode *root = build_risk_profile_tree(doc);
 
     if (!root) {
+        fsis_otel_span_error(build_span, "failed to build risk profile tree");
+        fsis_otel_end_span(build_span);
         fprintf(stderr, "Error: Failed to build risk profile tree\n");
         xmlFreeDoc(doc);
         xmlCleanupParser();
         return 1;
     }
+    fsis_otel_end_span(build_span);
 
     int return_code = 0;
 
@@ -230,6 +239,7 @@ main(int argc, char **argv)
         print_risk_profile_tree(root, 0);
         fprintf(stderr, "\nDone.\n");
     } else if (strcmp(format, "xml") == 0) {
+        fsis_otel_span *write_span = fsis_otel_start_span(otel, "build_tree_cli.write");
         // Create a new XML document for the tree structure
         xmlDocPtr tree_doc = xmlNewDoc(BAD_CAST "1.0");
         xmlNodePtr tree_root = xmlNewNode(NULL, BAD_CAST "RiskProfileTree");
@@ -249,6 +259,7 @@ main(int argc, char **argv)
         // Write to file
         int save_result = xmlSaveFormatFileEnc(output_path, tree_doc, "UTF-8", 1);
         if (save_result == -1) {
+            fsis_otel_span_error(write_span, "failed to write output XML");
             fprintf(stderr, "Error: Failed to save tree to '%s'\n", output_path);
             return_code = 1;
         } else {
@@ -256,6 +267,7 @@ main(int argc, char **argv)
         }
 
         xmlFreeDoc(tree_doc);
+        fsis_otel_end_span(write_span);
     }
 
     // Cleanup
@@ -265,4 +277,11 @@ main(int argc, char **argv)
     xmlCleanupParser();
 
     return return_code;
+}
+
+int
+main(int argc, char **argv)
+{
+    fsis_otel_runtime *otel = fsis_otel_start("build_tree_cli");
+    return fsis_otel_finish(otel, run_cli(argc, argv, otel));
 }

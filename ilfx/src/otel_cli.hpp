@@ -1,14 +1,14 @@
 #pragma once
 
-#include "absl/flags/flag.h"
+#include <algorithm>
+#include <cctype>
+#include <chrono>
+#include <cstdlib>
 #include <map>
 #include <memory>
 #include <string>
+#include <unistd.h>
 #include <utility>
-
-ABSL_FLAG(std::string, traceparent, "", "W3C traceparent value from the parent process");
-ABSL_FLAG(std::string, tracestate, "", "W3C tracestate value from the parent process");
-ABSL_FLAG(std::string, otlp_api_key, "", "New Relic OTLP API key; tracing is disabled when empty");
 
 #ifdef ILFX_ENABLE_OTEL
 #include "opentelemetry/context/context.h"
@@ -21,8 +21,9 @@ ABSL_FLAG(std::string, otlp_api_key, "", "New Relic OTLP API key; tracing is dis
 #include "opentelemetry/nostd/string_view.h"
 #include "opentelemetry/sdk/common/global_log_handler.h"
 #include "opentelemetry/sdk/resource/resource.h"
+#include "opentelemetry/sdk/trace/batch_span_processor_factory.h"
+#include "opentelemetry/sdk/trace/batch_span_processor_options.h"
 #include "opentelemetry/sdk/trace/provider.h"
-#include "opentelemetry/sdk/trace/simple_processor_factory.h"
 #include "opentelemetry/sdk/trace/tracer_provider.h"
 #include "opentelemetry/sdk/trace/tracer_provider_factory.h"
 #include "opentelemetry/trace/context.h"
@@ -76,26 +77,46 @@ private:
 class Runtime {
 public:
     Runtime(const std::string& service_name,
-            const std::string& api_key,
             const std::string& traceparent,
             const std::string& tracestate)
         : service_name_(service_name),
           traceparent_present_(!traceparent.empty()),
           tracestate_present_(!tracestate.empty())
     {
-        if (api_key.empty()) {
+        const char* sdk_disabled = std::getenv("OTEL_SDK_DISABLED");
+        std::string disabled = sdk_disabled ? sdk_disabled : "";
+        std::transform(disabled.begin(), disabled.end(), disabled.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+        const bool endpoint_configured =
+            std::getenv("OTEL_EXPORTER_OTLP_ENDPOINT") != nullptr ||
+            std::getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") != nullptr;
+        if (disabled == "true" || !endpoint_configured) {
             return;
         }
 
-        otlp::OtlpHttpExporterOptions opts;
-        opts.url = "https://otlp.nr-data.net:4318/v1/traces";
-        opts.console_debug = true;
-        opts.http_headers.insert({"api-key", api_key});
+        // Export failures must not alter a CLI's stderr contract. Elastic/OTLP
+        // availability is observability state, not a business-command error.
+        internal_log::GlobalLogHandler::SetLogHandler(
+            opentelemetry::nostd::shared_ptr<internal_log::LogHandler>(
+                new internal_log::NoopLogHandler()));
 
-        internal_log::GlobalLogHandler::SetLogLevel(internal_log::LogLevel::Debug);
+        // OtlpHttpExporterOptions reads the standard OTEL_EXPORTER_OTLP_*
+        // environment variables. Elastic APM is configured as the OTLP
+        // destination by the deployment, not in the executable.
+        otlp::OtlpHttpExporterOptions opts;
+        opts.console_debug = false;
+        if (!std::getenv("OTEL_EXPORTER_OTLP_TIMEOUT") &&
+            !std::getenv("OTEL_EXPORTER_OTLP_TRACES_TIMEOUT")) {
+            opts.timeout = std::chrono::seconds(2);
+        }
 
         auto exporter = otlp::OtlpHttpExporterFactory::Create(opts);
-        auto processor = trace_sdk::SimpleSpanProcessorFactory::Create(std::move(exporter));
+        trace_sdk::BatchSpanProcessorOptions processor_options{};
+        processor_options.schedule_delay_millis = std::chrono::milliseconds(100);
+        processor_options.max_export_batch_size = 64;
+        auto processor = trace_sdk::BatchSpanProcessorFactory::Create(
+            std::move(exporter), processor_options);
 
         resource::ResourceAttributes attributes = {
             {"service.name", service_name_},
@@ -125,6 +146,11 @@ public:
     bool enabled() const
     {
         return enabled_;
+    }
+
+    const std::string& serviceName() const
+    {
+        return service_name_;
     }
 
     bool traceparentPresent() const
@@ -169,14 +195,14 @@ public:
         if (!enabled_ || !span) {
             return nullptr;
         }
-        return std::make_unique<trace::Scope>(span);
+        return std::make_unique<trace::Scope>(trace::Tracer::WithActiveSpan(span));
     }
 
     void shutdown()
     {
         if (provider_) {
-            provider_->ForceFlush();
-            provider_->Shutdown();
+            provider_->ForceFlush(std::chrono::seconds(2));
+            provider_->Shutdown(std::chrono::seconds(2));
             provider_.reset();
         }
 
@@ -275,6 +301,8 @@ public:
           span_(otel.startRootSpan(name)),
           scope_(otel.activate(span_))
     {
+        setAttribute("process.executable.name", otel_.serviceName());
+        setAttribute("process.pid", static_cast<std::int64_t>(::getpid()));
         setAttribute("traceparent.present", otel_.traceparentPresent());
         setAttribute("tracestate.present", otel_.tracestatePresent());
         if (otel_.hasInvalidParent()) {
@@ -312,9 +340,10 @@ public:
         }
 
         if (span_) {
-            span_->SetAttribute("exit.code", code);
+            span_->SetAttribute("process.exit.code", code);
             if (code != 0) {
                 span_->SetStatus(trace::StatusCode::kError, "command failed");
+                span_->SetAttribute("error.type", "_OTHER");
             }
             scope_.reset();
             span_->End();
@@ -334,12 +363,16 @@ private:
 #else
 class Runtime {
 public:
-    Runtime(const std::string&, const std::string&, const std::string&, const std::string&) {}
+    Runtime(const std::string&, const std::string&, const std::string&) {}
     bool enabled() const { return false; }
+    const std::string& serviceName() const { return empty_; }
     bool traceparentPresent() const { return false; }
     bool tracestatePresent() const { return false; }
     bool hasInvalidParent() const { return false; }
     void shutdown() {}
+
+private:
+    std::string empty_;
 };
 
 class ScopedSpan {
@@ -369,12 +402,24 @@ public:
 };
 #endif
 
-inline Runtime runtimeFromFlags(const std::string& service_name)
+inline std::string environmentValue(const char* name)
+{
+    const char* value = std::getenv(name);
+    return value ? value : "";
+}
+
+inline Runtime runtimeFromEnvironment(const std::string& service_name)
 {
     return Runtime(service_name,
-                   absl::GetFlag(FLAGS_otlp_api_key),
-                   absl::GetFlag(FLAGS_traceparent),
-                   absl::GetFlag(FLAGS_tracestate));
+                   environmentValue("TRACEPARENT"),
+                   environmentValue("TRACESTATE"));
+}
+
+// Kept as a source-compatible name for the existing CLI entrypoints. Context
+// and exporter configuration now come exclusively from environment carriers.
+inline Runtime runtimeFromFlags(const std::string& service_name)
+{
+    return runtimeFromEnvironment(service_name);
 }
 
 } // namespace ilfx::otel
